@@ -1,0 +1,25 @@
+---
+description: Release, cache, and API compatibility during rollout
+globs:
+  - "**/*.{ts,tsx}"
+  - "**/*.yml"
+  - "**/*.yaml"
+alwaysApply: true
+---
+
+## Rollout safety
+- Assume users and CDN edges may serve a mix of old and new assets during deployment.
+- Ensure `index.html` and entry chunk references update atomically with the deployment strategy (avoid orphan chunk references).
+- New UI versions should tolerate the backend during rolling deployment when the API contract allows it.
+
+## API and schema coordination
+- Avoid coupling a UI release to a backend-only change that is unsafe until all clients update, unless rollout is controlled.
+- Prefer additive API changes first; deprecate and remove only after adoption windows when possible.
+
+## Caching and PWA considerations
+- If service workers or aggressive caching are used, version caches explicitly and test upgrade paths.
+- Do not cache authenticated API responses in shared caches unless explicitly designed for it.
+
+## Operational hygiene
+- Feature flags should default safely; document kill switches for risky UI changes.
+- Monitor client errors and web vitals after deploy; roll forward or revert with a clear playbook.

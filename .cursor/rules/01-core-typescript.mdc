@@ -1,0 +1,52 @@
+---
+description: Core TypeScript and React engineering standards for a production-grade UI
+globs:
+  - "**/*.{ts,tsx}"
+alwaysApply: true
+---
+
+You are working in a high-quality, production-grade TypeScript and React codebase.
+
+## Toolchain and posture
+- Target a modern stable TypeScript and the repository’s chosen React major version; write idiomatic TS/React, not patterns ported blindly from other ecosystems.
+- Prefer the platform and standard browser APIs unless a dependency clearly improves correctness, accessibility, security, or maintainability.
+- Preserve compatibility and existing architecture unless the task explicitly requires change.
+
+## General code quality
+- Prefer simple, explicit, readable code over abstraction-heavy designs.
+- Keep functions and components focused and cohesive.
+- Avoid hidden side effects and surprise renders.
+- Remove dead code, commented-out code, and unused imports when touching files.
+- Do not introduce speculative abstractions or premature generic wrappers.
+
+## Naming and module design
+- Use clear, descriptive names for components, hooks, and modules.
+- Avoid abbreviations that obscure intent.
+- Prefer colocated types and narrow exports; do not re-export entire dependency surfaces without a reason.
+
+## TypeScript-specific style
+- Prefer precise types over `any`; use `unknown` at boundaries and narrow explicitly.
+- Let inference work where it stays clear; annotate public APIs and non-obvious values.
+- Do not use type assertions to silence errors without fixing the underlying mismatch.
+- Prefer discriminated unions and exhaustive checks where they model real states.
+
+## React-specific style
+- Keep components presentational where practical; lift state and data orchestration deliberately.
+- Prefer composition over deep inheritance-style prop drilling; use context sparingly and only with a clear scope.
+- Lists need stable keys; avoid array index as key when identity matters.
+- Effects (`useEffect`, etc.) must declare correct dependencies; avoid stale closures and redundant effects.
+
+## Async and data
+- Use `async`/`await` with explicit error handling; do not swallow errors.
+- Cancel or ignore stale responses for in-flight requests when inputs change (e.g. abort controllers or query libraries).
+- Do not block the main thread with heavy synchronous work without chunking or moving work off the hot path.
+
+## Dependencies
+- Keep dependencies minimal and justified.
+- Prefer mature, maintained libraries with a clear UX or DX benefit.
+- Avoid replacing platform capabilities without a concrete reason.
+
+## Documentation
+- Keep comments high signal.
+- Explain why, invariants, or non-obvious tradeoffs.
+- Do not narrate obvious code.

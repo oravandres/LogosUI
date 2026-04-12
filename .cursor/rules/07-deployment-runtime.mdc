@@ -1,0 +1,40 @@
+---
+description: Deployment and runtime standards for the UI (static assets, CDN, optional containers)
+globs:
+  - "**/*.{ts,tsx}"
+  - "**/*.yml"
+  - "**/*.yaml"
+  - "**/Dockerfile*"
+  - "**/nginx*.conf"
+alwaysApply: true
+---
+
+This application is intended for production deployment (static hosting, CDN, reverse proxy, and/or Kubernetes for the UI asset server).
+
+## Deployment posture
+- Prefer boring, well-supported deployment patterns (static files behind a CDN or reverse proxy, or a minimal container image serving static assets).
+- Keep infrastructure and pipeline configuration explicit, reviewable, and reversible.
+- Do not rely on preview-only platform features unless explicitly required.
+
+## Static assets and caching
+- Set cache headers intentionally for hashed assets vs. `index.html` (immutable long cache for hashed bundles; short or no cache for `index.html`).
+- Avoid serving stale app shells that reference removed chunks after deploys.
+
+## Containers (when used)
+- Use a minimal base image appropriate for static serving (e.g. nginx or distroless).
+- Run as non-root where supported.
+- Pin image and dependency versions in manifests; do not use `:latest` in production.
+- Keep secrets out of plain manifests and source code.
+
+## Configuration
+- Keep environment-specific configuration externalized (build-time public env, runtime injection).
+- Separate public config from secrets; never bake secrets into client bundles.
+- Do not hardcode environment-specific API base URLs without a clear build/deploy strategy.
+
+## Networking and traffic
+- Terminate TLS at the edge; enforce HTTPS redirects in production.
+- Keep health and readiness meaningful if the UI is served from a Kubernetes workload (respond when the static server can serve traffic).
+
+## Observability
+- Prefer client-side RUM and error reporting integrated with backend trace correlation where available.
+- Do not ship verbose debug logging to production users by default.

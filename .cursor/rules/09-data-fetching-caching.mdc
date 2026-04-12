@@ -1,0 +1,26 @@
+---
+description: Data fetching, caching, and client performance discipline
+globs:
+  - "**/*.{ts,tsx}"
+alwaysApply: true
+---
+
+## Fetching and caching safety
+- Assume users may run old bundles after deploy; tolerate API responses that are backward compatible during rollout windows.
+- Prefer cache keys and invalidation strategies that stay correct when entities change (optimistic updates must reconcile with server truth).
+- Avoid destructive local state updates without a clear rollback path on failure.
+
+## Backward compatibility
+- New UI code should tolerate older API responses during phased backend rollouts when applicable.
+- Coordinate breaking API changes across repositories; do not assume atomic backend and frontend deploys unless guaranteed.
+
+## Large lists and heavy views
+- Be deliberate about virtualization, pagination, and incremental loading for large datasets.
+- Measure before optimizing; avoid premature micro-optimizations.
+
+## Bundle and runtime performance
+- Keep bundle size intentional; lazy-load routes and heavy dependencies where it helps real user journeys.
+- Avoid blocking the main thread with large synchronous work; chunk or defer where appropriate.
+
+## Connection usage
+- Reuse HTTP connections via the browser and client defaults; avoid redundant parallel duplicate requests for the same resource without deduplication.

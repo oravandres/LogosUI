@@ -1,0 +1,20 @@
+---
+description: CI quality gates for this TypeScript/React application
+globs:
+  - "**/*.{ts,tsx}"
+  - ".github/workflows/*.yml"
+  - ".github/workflows/*.yaml"
+  - "eslint.config.*"
+  - ".eslintrc*"
+  - "tsconfig*.json"
+  - "Makefile"
+alwaysApply: true
+---
+
+## Quality gates
+- Keep CI fast, deterministic, and meaningful.
+- Typical required checks include typecheck (`tsc --noEmit` or project equivalent), unit tests, lint (ESLint), and production build.
+- Add dependency or security scanning (`pnpm audit`, Snyk, etc.) when the org standardizes on a tool.
+- Do not weaken CI to bypass failing quality or security checks without an explicit justification.
+- Prefer fixing flaky tests over retry-based masking.
+- Keep local developer commands aligned with CI commands where practical.
