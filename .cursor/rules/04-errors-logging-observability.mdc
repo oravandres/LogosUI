@@ -2,7 +2,7 @@
 description: Error handling, logging, and client observability standards
 globs:
   - "**/*.{ts,tsx}"
-alwaysApply: true
+alwaysApply: false
 ---
 
 ## Errors

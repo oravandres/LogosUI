@@ -3,7 +3,7 @@ description: Testing and quality practices for TypeScript and React
 globs:
   - "**/*.{ts,tsx}"
   - "**/*.{test,spec}.{ts,tsx}"
-alwaysApply: true
+alwaysApply: false
 ---
 
 ## Testing philosophy

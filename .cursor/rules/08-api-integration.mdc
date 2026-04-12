@@ -2,7 +2,7 @@
 description: Integration with the Logos backend API—types, auth, and client boundaries
 globs:
   - "**/*.{ts,tsx}"
-alwaysApply: true
+alwaysApply: false
 ---
 
 This UI integrates with the Logos backend over HTTP. The browser is not a database client.

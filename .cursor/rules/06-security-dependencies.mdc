@@ -6,7 +6,7 @@ globs:
   - "package-lock.json"
   - "pnpm-lock.yaml"
   - "yarn.lock"
-alwaysApply: true
+alwaysApply: false
 ---
 
 ## Security baseline

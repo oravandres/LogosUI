@@ -2,7 +2,7 @@
 description: HTTP client and API integration standards for the UI
 globs:
   - "**/*.{ts,tsx}"
-alwaysApply: true
+alwaysApply: false
 ---
 
 ## API layer

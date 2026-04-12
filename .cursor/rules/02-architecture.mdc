@@ -2,7 +2,7 @@
 description: Architecture rules for a production TypeScript/React application
 globs:
   - "**/*.{ts,tsx}"
-alwaysApply: true
+alwaysApply: false
 ---
 
 ## Architecture

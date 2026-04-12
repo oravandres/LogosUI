@@ -6,7 +6,7 @@ globs:
   - "**/*.yaml"
   - "**/Dockerfile*"
   - "**/nginx*.conf"
-alwaysApply: true
+alwaysApply: false
 ---
 
 This application is intended for production deployment (static hosting, CDN, reverse proxy, and/or Kubernetes for the UI asset server).

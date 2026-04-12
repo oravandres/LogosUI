@@ -2,7 +2,7 @@
 description: Data fetching, caching, and client performance discipline
 globs:
   - "**/*.{ts,tsx}"
-alwaysApply: true
+alwaysApply: false
 ---
 
 ## Fetching and caching safety

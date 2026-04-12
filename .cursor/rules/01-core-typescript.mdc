@@ -2,7 +2,7 @@
 description: Core TypeScript and React engineering standards for a production-grade UI
 globs:
   - "**/*.{ts,tsx}"
-alwaysApply: true
+alwaysApply: false
 ---
 
 You are working in a high-quality, production-grade TypeScript and React codebase.

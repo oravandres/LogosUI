@@ -8,7 +8,7 @@ globs:
   - ".eslintrc*"
   - "tsconfig*.json"
   - "Makefile"
-alwaysApply: true
+alwaysApply: false
 ---
 
 ## Quality gates

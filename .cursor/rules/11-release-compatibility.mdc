@@ -4,7 +4,7 @@ globs:
   - "**/*.{ts,tsx}"
   - "**/*.yml"
   - "**/*.yaml"
-alwaysApply: true
+alwaysApply: false
 ---
 
 ## Rollout safety
