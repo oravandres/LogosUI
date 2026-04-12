@@ -1,0 +1,29 @@
+---
+description: How the coding agent should behave in this TypeScript/React repository
+alwaysApply: true
+---
+
+## Working method
+- First inspect local folder structure, naming, hook patterns, tests, and error handling before editing.
+- Follow existing high-quality patterns rather than introducing stylistic novelty.
+- Make the smallest safe change that fully solves the task.
+- Do not rename modules, files, or public component APIs without a clear reason.
+
+## Frontend-specific expectations
+- Prefer explicit data flow and readable JSX over clever indirection.
+- Keep side effects in the right layer (effects, event handlers, or data libraries)—not during render.
+- Preserve accessibility: labels, focus management, keyboard paths, and semantic HTML.
+- Preserve error and loading states for async work; avoid infinite spinners without failure paths.
+
+## Change checklist
+Before finishing (same bar as `AGENTS.md`):
+- types and imports are correct
+- tests were added or updated where needed
+- no obvious security or accessibility regression was introduced
+- no obvious deploy, cache, or API compatibility risk was introduced
+- docs were updated if behavior changed
+
+## Also verify for TypeScript and UI edits
+- TypeScript types are sound (no unjustified `any` or assertions); imports and barrel files remain coherent.
+- Public UI behavior remains consistent unless intentionally changed; async flows handle abort, error, and empty states.
+- no obvious observability regression was introduced (logging, client errors, correlation where applicable).

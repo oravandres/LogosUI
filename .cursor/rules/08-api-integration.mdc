@@ -1,0 +1,30 @@
+---
+description: Integration with the Logos backend API—types, auth, and client boundaries
+globs:
+  - "**/*.{ts,tsx}"
+alwaysApply: false
+---
+
+This UI integrates with the Logos backend over HTTP. The browser is not a database client.
+
+## Contract alignment
+- Keep API types and serializers aligned with the backend contract; treat the server as the source of truth for persisted data.
+- Prefer generated or shared contract artifacts (OpenAPI, shared package) when the repo adopts them.
+- Do not duplicate business rules that belong on the server unless the UI needs derived presentation logic—document the distinction.
+
+## Context and cancellation
+- Pass `AbortSignal` or equivalent through API calls tied to user navigation or component lifecycle.
+- Do not leave subscriptions or polling running after unmount without explicit cleanup.
+
+## Auth and identity
+- Do not store long-lived secrets in plain browser storage without an explicit threat model.
+- Prefer secure, httpOnly session cookies or token patterns approved by the platform when applicable.
+- Clear client state on logout; avoid leaking prior user data in memory or caches.
+
+## Error handling
+- Classify API errors into stable UI outcomes (network, validation, not found, forbidden, conflict).
+- Do not leak raw error payloads or internal URLs to users in production.
+
+## Performance and discipline
+- Prefer explicit request shapes and pagination for list views.
+- Avoid N+1 client-side patterns when the API offers batching or list endpoints.

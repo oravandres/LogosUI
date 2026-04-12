@@ -1,0 +1,27 @@
+---
+description: Architecture rules for a production TypeScript/React application
+globs:
+  - "**/*.{ts,tsx}"
+alwaysApply: false
+---
+
+## Architecture
+- Keep UI, application logic, and data-access concerns separated.
+- Route and page components should stay thin; delegate to feature modules and hooks.
+- Business rules belong in domain-oriented modules, hooks, or services—not scattered in leaf components.
+- Network and persistence boundaries belong behind clear modules (API client, query layer, storage helpers).
+
+## Module boundaries
+- Prefer feature-oriented folders when the codebase grows; avoid a single undifferentiated `components` dump.
+- Keep shared UI primitives small and reusable; avoid coupling them to feature-specific types.
+- Avoid circular imports between features; lift shared types or utilities to a neutral layer when needed.
+
+## Construction and wiring
+- Prefer explicit dependency injection through hooks and module factories over hidden singletons.
+- Do not use global mutable state for core application dependencies except where the platform requires it (e.g. router context) and the scope is explicit.
+- Keep app bootstrap and providers in dedicated entry/layout modules.
+
+## Configuration
+- Treat public configuration as explicit build-time or runtime input (env vars, injected config).
+- Validate configuration at startup where practical; fail fast on invalid required configuration for the current environment.
+- Never hardcode secrets, tokens, or environment-specific endpoints in source control.

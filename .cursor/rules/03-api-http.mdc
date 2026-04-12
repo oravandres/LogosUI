@@ -1,0 +1,27 @@
+---
+description: HTTP client and API integration standards for the UI
+globs:
+  - "**/*.{ts,tsx}"
+alwaysApply: false
+---
+
+## API layer
+- Centralize HTTP calls in a small API module or client; avoid ad hoc `fetch` scattered through components.
+- Keep call sites thin: build request input, invoke client, map typed responses to UI state.
+- Validate or parse responses at the boundary when shapes come from the network (runtime checks or schema validation where justified).
+
+## Contracts
+- Keep request and response shapes explicit and stable; align types with the backend contract (e.g. OpenAPI or shared types).
+- Do not treat transport DTOs as full domain models when the UI needs different derived state—map explicitly.
+- Preserve backward compatibility with the API unless explicitly instructed to break it; coordinate with backend versioning when needed.
+- Map HTTP status codes and error bodies to stable user-facing outcomes (empty, retry, forbidden, etc.).
+
+## Timeouts and cancellation
+- Use `AbortSignal` (or the HTTP client’s equivalent) for cancellable requests.
+- Set reasonable timeouts for user-initiated actions; avoid unbounded waits.
+- Do not ignore aborted or cancelled errors in UI state updates.
+
+## Fetch posture
+- Prefer one HTTP stack (native `fetch`, or the project’s chosen client) consistently.
+- Interceptors and middleware should stay transparent and minimal.
+- Be explicit about request bodies, content types, and size limits where uploads exist.

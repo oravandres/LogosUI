@@ -1,0 +1,30 @@
+---
+description: Testing and quality practices for TypeScript and React
+globs:
+  - "**/*.{ts,tsx}"
+  - "**/*.{test,spec}.{ts,tsx}"
+alwaysApply: false
+---
+
+## Testing philosophy
+- Test observable behavior and user-visible outcomes, not implementation trivia.
+- Prefer table-driven or parameterized tests when they improve clarity.
+- Keep tests deterministic; avoid reliance on real time, network, or flaky ordering unless isolated in integration tests.
+
+## Unit tests
+- Keep mocks at true boundaries (HTTP, storage, browser APIs).
+- Prefer testing pure helpers and hooks with realistic inputs.
+- Use testing-library patterns that resemble user interaction (roles, labels) over brittle selectors.
+
+## Integration and E2E tests
+- Cover important workflows and API contract assumptions with realistic fixtures.
+- Avoid hidden environmental assumptions; document required env for integration runs.
+- E2E tests should focus on critical paths; keep them maintainable and parallel-safe where possible.
+
+## Visual and accessibility
+- When the project uses visual regression or a11y checks in CI, keep snapshots and rules stable and intentional.
+
+## Quality gates
+- New behavior should include tests or a clear rationale when tests are impractical (e.g. thin wiring only).
+- Prefer fast unit tests for tight feedback; reserve heavy E2E for high-value flows.
+- Keep the test suite fast enough for frequent local execution.

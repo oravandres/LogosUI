@@ -1,0 +1,26 @@
+---
+description: Error handling, logging, and client observability standards
+globs:
+  - "**/*.{ts,tsx}"
+alwaysApply: false
+---
+
+## Errors
+- Surface failures with clear, actionable UI feedback; avoid silent failure in user flows.
+- Preserve error context when reporting to observability (message, code, correlation id) without leaking secrets.
+- Distinguish user-fixable validation errors from system or network failures.
+
+## Error boundaries
+- Use React error boundaries for subtree failures where appropriate; do not rely on them for expected control flow.
+- Never expose raw stack traces, tokens, or internal URLs to end users in production.
+- Map known API error shapes to stable UI states (not found, conflict, unauthorized).
+
+## Logging
+- Prefer structured logging or the platform’s standard client logger when available.
+- Use stable field names for correlation (request id, trace id, user/session identifiers where policy allows).
+- Never log secrets, access tokens, refresh tokens, passwords, or full PII.
+
+## Observability
+- Instrument critical user journeys: navigation, auth, primary actions, and payment-like flows if applicable.
+- Prefer OpenTelemetry or the organization’s RUM/analytics standard for client traces and web vitals.
+- Record useful telemetry for failures, latency, retries, and client-side saturation (rate limits).
