@@ -1,5 +1,6 @@
 import { createBrowserRouter } from "react-router";
 import { Layout } from "@/components/Layout";
+import { AuthorsPage } from "@/pages/AuthorsPage";
 import { CategoriesPage } from "@/pages/CategoriesPage";
 import { HomePage } from "@/pages/HomePage";
 import { ImagesPage } from "@/pages/ImagesPage";
@@ -12,6 +13,7 @@ export const router = createBrowserRouter([
       { index: true, element: <HomePage /> },
       { path: "categories", element: <CategoriesPage /> },
       { path: "images", element: <ImagesPage /> },
+      { path: "authors", element: <AuthorsPage /> },
     ],
   },
 ]);

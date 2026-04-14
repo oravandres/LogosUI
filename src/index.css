@@ -71,7 +71,7 @@ code.wrap {
 
 .app-main {
   padding: 1.5rem;
-  max-width: 52rem;
+  max-width: 72rem;
 }
 
 .page h2 {
@@ -148,6 +148,13 @@ code.wrap {
   color: #475569;
 }
 
+.field-hint {
+  display: block;
+  font-size: 0.8125rem;
+  font-weight: 400;
+  margin-bottom: 0.25rem;
+}
+
 .input {
   padding: 0.45rem 0.6rem;
   font: inherit;
@@ -200,6 +207,56 @@ code.wrap {
   overflow: hidden;
   text-overflow: ellipsis;
   vertical-align: bottom;
+}
+
+.textarea {
+  resize: vertical;
+  min-height: 4.5rem;
+}
+
+.form-grid-authors .field-span-2 {
+  grid-column: 1 / -1;
+}
+
+.toolbar-authors {
+  align-items: flex-start;
+}
+
+.toolbar-right-wrap {
+  flex: 1 1 16rem;
+  justify-content: flex-end;
+}
+
+.field-grow {
+  flex: 1 1 12rem;
+  min-width: 10rem;
+}
+
+.input-search {
+  min-width: 12rem;
+  width: 100%;
+  max-width: 22rem;
+}
+
+.hint-text {
+  margin: -0.5rem 0 1rem;
+  font-size: 0.8125rem;
+}
+
+.data-table-authors {
+  font-size: 0.875rem;
+}
+
+.bio-cell {
+  max-width: 10rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nowrap-strong {
+  white-space: nowrap;
+  font-weight: 500;
 }
 
 .form-actions {

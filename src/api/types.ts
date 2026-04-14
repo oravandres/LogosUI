@@ -37,6 +37,29 @@ export type ImageWriteBody = {
   category_id: string | null;
 };
 
+/** Matches Logos `model.AuthorResponse`. */
+export type Author = {
+  id: string;
+  name: string;
+  bio: string | null;
+  born_date: string | null;
+  died_date: string | null;
+  image_id: string | null;
+  category_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+/** Matches Logos `CreateAuthorRequest` / `UpdateAuthorRequest`. */
+export type AuthorWriteBody = {
+  name: string;
+  bio: string | null;
+  born_date: string | null;
+  died_date: string | null;
+  image_id: string | null;
+  category_id: string | null;
+};
+
 /** GET /api/v1/health success body. */
 export type HealthOk = { status: "healthy" };
 

@@ -15,6 +15,9 @@ export function Layout() {
           <NavLink to="/images" className={navClass}>
             Images
           </NavLink>
+          <NavLink to="/authors" className={navClass}>
+            Authors
+          </NavLink>
         </nav>
       </header>
       <main className="app-main">
