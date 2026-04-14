@@ -15,9 +15,10 @@ dist-ssr
 # Editor
 .DS_Store
 
-# Env (keep .env.example committed)
+# Env (keep .env.example committed; ignore .env.development / .env.production / etc.)
 .env
-.env.*.local
+.env.*
+!.env.example
 
 # TypeScript
 *.tsbuildinfo

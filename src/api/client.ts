@@ -3,7 +3,7 @@ const DEV_DEFAULT_BASE = "http://localhost:8000";
 /**
  * Base URL for the Logos HTTP API (no trailing slash).
  * In development, defaults to Logos' default bind (`API_PORT=8000`) if unset.
- * In production builds, `VITE_LOGOS_API_BASE_URL` is required.
+ * In production builds, `VITE_LOGOS_API_BASE_URL` is required (also enforced in `vite.config.ts` at build time).
  */
 export function getApiBaseUrl(): string {
   const raw = import.meta.env.VITE_LOGOS_API_BASE_URL;
@@ -53,9 +53,6 @@ export async function fetchJson<T>(
   init?: RequestInit
 ): Promise<T> {
   const headers = new Headers(init?.headers);
-  if (init?.body != null && !headers.has("Content-Type")) {
-    headers.set("Content-Type", "application/json");
-  }
 
   const res = await fetch(buildUrl(path), { ...init, headers });
   const text = await res.text();
@@ -79,4 +76,36 @@ export async function fetchJson<T>(
   }
 
   return data as T;
+}
+
+/** POST with a JSON-serialized body and `Content-Type: application/json`. */
+export async function postJson<TResponse>(
+  path: string,
+  body: unknown,
+  init?: Omit<RequestInit, "body" | "method">
+): Promise<TResponse> {
+  const headers = new Headers(init?.headers);
+  headers.set("Content-Type", "application/json");
+  return fetchJson<TResponse>(path, {
+    ...init,
+    method: "POST",
+    headers,
+    body: JSON.stringify(body),
+  });
+}
+
+/** PUT with a JSON-serialized body and `Content-Type: application/json`. */
+export async function putJson<TResponse>(
+  path: string,
+  body: unknown,
+  init?: Omit<RequestInit, "body" | "method">
+): Promise<TResponse> {
+  const headers = new Headers(init?.headers);
+  headers.set("Content-Type", "application/json");
+  return fetchJson<TResponse>(path, {
+    ...init,
+    method: "PUT",
+    headers,
+    body: JSON.stringify(body),
+  });
 }
