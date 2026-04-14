@@ -148,6 +148,13 @@ code.wrap {
   color: #475569;
 }
 
+.field-hint {
+  display: block;
+  font-size: 0.8125rem;
+  font-weight: 400;
+  margin-bottom: 0.25rem;
+}
+
 .input {
   padding: 0.45rem 0.6rem;
   font: inherit;

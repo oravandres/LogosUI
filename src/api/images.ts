@@ -6,9 +6,6 @@ const API_PREFIX = "/api/v1/images";
 /** Matches Logos `model.DefaultLimit`. */
 export const IMAGES_PAGE_SIZE = 20;
 
-/** Matches Logos `MaxLimit` for bulk list fetches. */
-export const IMAGE_LIST_MAX_LIMIT = 100;
-
 export type ListImagesParams = {
   limit?: number;
   offset?: number;
@@ -42,29 +39,4 @@ export function deleteImage(id: string): Promise<void> {
   return fetchJson<void>(`${API_PREFIX}/${encodeURIComponent(id)}`, {
     method: "DELETE",
   });
-}
-
-/** Pages through every image (for pickers). */
-export async function listAllImages(
-  signal?: AbortSignal
-): Promise<Image[]> {
-  const out: Image[] = [];
-  let offset = 0;
-  for (;;) {
-    const page = await listImages({
-      limit: IMAGE_LIST_MAX_LIMIT,
-      offset,
-      signal,
-    });
-    out.push(...page.items);
-    if (
-      page.items.length === 0 ||
-      page.items.length < IMAGE_LIST_MAX_LIMIT ||
-      out.length >= page.total
-    ) {
-      break;
-    }
-    offset += IMAGE_LIST_MAX_LIMIT;
-  }
-  return out;
 }

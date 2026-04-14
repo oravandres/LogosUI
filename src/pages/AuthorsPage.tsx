@@ -14,10 +14,13 @@ import {
   listAuthors,
 } from "@/api/authors";
 import { listAllCategoriesByType } from "@/api/categories";
-import { listAllImages } from "@/api/images";
+import { listImages } from "@/api/images";
 import type { AuthorWriteBody } from "@/api/types";
 
 const SEARCH_DEBOUNCE_MS = 400;
+
+/** Bounded fetch for portrait picker (lazy-loaded on first focus). */
+const PORTRAIT_PICKER_LIMIT = 50;
 
 type DeleteAuthorVars = {
   id: string;
@@ -33,17 +36,21 @@ export function AuthorsPage() {
   const [searchInput, setSearchInput] = useState("");
   const [appliedSearch, setAppliedSearch] = useState("");
   const [offset, setOffset] = useState(0);
+  const [portraitPickerArmed, setPortraitPickerArmed] = useState(false);
 
+  const lastAppliedSearchRef = useRef("");
   useEffect(() => {
     const t = window.setTimeout(() => {
-      setAppliedSearch(searchInput.trim());
+      const next = searchInput.trim();
+      if (lastAppliedSearchRef.current === next) {
+        return;
+      }
+      lastAppliedSearchRef.current = next;
+      setOffset(0);
+      setAppliedSearch(next);
     }, SEARCH_DEBOUNCE_MS);
     return () => window.clearTimeout(t);
   }, [searchInput]);
-
-  useEffect(() => {
-    setOffset(0);
-  }, [appliedSearch, categoryFilterId]);
 
   const listContextRef = useRef({
     offset,
@@ -63,13 +70,19 @@ export function AuthorsPage() {
   });
 
   const imagesPickerQuery = useQuery({
-    queryKey: ["images", "picker", "all"],
-    queryFn: ({ signal }) => listAllImages(signal),
+    queryKey: ["images", "picker", "portrait", PORTRAIT_PICKER_LIMIT],
+    queryFn: ({ signal }) =>
+      listImages({
+        limit: PORTRAIT_PICKER_LIMIT,
+        offset: 0,
+        signal,
+      }),
+    enabled: portraitPickerArmed,
     staleTime: 60_000,
   });
 
   const authorCategoryOptions = authorCategoriesQuery.data ?? [];
-  const imageOptions = imagesPickerQuery.data ?? [];
+  const imageOptions = imagesPickerQuery.data?.items ?? [];
 
   const listQuery = useQuery({
     queryKey: [
@@ -143,6 +156,7 @@ export function AuthorsPage() {
 
   const onFilterChange = (next: string) => {
     setCategoryFilterId(next);
+    setOffset(0);
   };
 
   const onSubmitCreate = (e: FormEvent<HTMLFormElement>) => {
@@ -175,8 +189,9 @@ export function AuthorsPage() {
     return err instanceof ApiError ? err.message : String(err);
   }, [deleteMutation.error]);
 
-  const pickersLoading =
-    authorCategoriesQuery.isPending || imagesPickerQuery.isPending;
+  const authorPickerLoading = authorCategoriesQuery.isPending;
+  const portraitPickerLoading =
+    portraitPickerArmed && imagesPickerQuery.isPending;
 
   return (
     <section className="page">
@@ -232,11 +247,16 @@ export function AuthorsPage() {
           </label>
           <label className="field">
             <span className="field-label">Portrait image</span>
+            <span className="field-hint muted">
+              Focus to load up to {PORTRAIT_PICKER_LIMIT} images (API default
+              order).
+            </span>
             <select
               className="input"
               value={formImageId}
               onChange={(ev) => setFormImageId(ev.target.value)}
-              disabled={createMutation.isPending || pickersLoading}
+              onFocus={() => setPortraitPickerArmed(true)}
+              disabled={createMutation.isPending || portraitPickerLoading}
             >
               <option value="">None</option>
               {imageOptions.map((img) => (
@@ -252,7 +272,7 @@ export function AuthorsPage() {
               className="input"
               value={formCategoryId}
               onChange={(ev) => setFormCategoryId(ev.target.value)}
-              disabled={createMutation.isPending || pickersLoading}
+              disabled={createMutation.isPending || authorPickerLoading}
             >
               <option value="">None</option>
               {authorCategoryOptions.map((c) => (
@@ -272,7 +292,8 @@ export function AuthorsPage() {
             </button>
           </div>
         </form>
-        {authorCategoriesQuery.isError || imagesPickerQuery.isError ? (
+        {authorCategoriesQuery.isError ||
+        (portraitPickerArmed && imagesPickerQuery.isError) ? (
           <p className="error" role="alert">
             Some pickers failed to load. You can still create authors without
             optional references.
