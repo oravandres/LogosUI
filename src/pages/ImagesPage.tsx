@@ -7,7 +7,7 @@ import {
 import { useMemo, useRef, useState, type FormEvent } from "react";
 import { flushSync } from "react-dom";
 import { ApiError } from "@/api/client";
-import { listCategories } from "@/api/categories";
+import { listAllCategoriesByType } from "@/api/categories";
 import {
   createImage,
   deleteImage,
@@ -15,6 +15,7 @@ import {
   listImages,
 } from "@/api/images";
 import type { ImageWriteBody } from "@/api/types";
+import { safeHttpHref } from "@/url/safeHttpUrl";
 
 type DeleteImageVars = {
   id: string;
@@ -33,18 +34,11 @@ export function ImagesPage() {
 
   const imageCategoriesQuery = useQuery({
     queryKey: ["categories", "picker", "image"],
-    queryFn: ({ signal }) =>
-      listCategories({
-        type: "image",
-        /** Logos `MaxLimit` (see `internal/model/pagination.go`). */
-        limit: 100,
-        offset: 0,
-        signal,
-      }),
+    queryFn: ({ signal }) => listAllCategoriesByType("image", signal),
     staleTime: 60_000,
   });
 
-  const imageCategoryOptions = imageCategoriesQuery.data?.items ?? [];
+  const imageCategoryOptions = imageCategoriesQuery.data ?? [];
 
   const listQuery = useQuery({
     queryKey: ["images", { categoryFilterId, offset }],
@@ -271,17 +265,26 @@ export function ImagesPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {page.items.map((img) => (
+                  {page.items.map((img) => {
+                    const linkHref = safeHttpHref(img.url);
+                    const displayUrl = truncateUrl(img.url, 48);
+                    return (
                     <tr key={img.id}>
                       <td>
-                        <a
-                          className="table-link"
-                          href={img.url}
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          {truncateUrl(img.url, 48)}
-                        </a>
+                        {linkHref ? (
+                          <a
+                            className="table-link"
+                            href={linkHref}
+                            target="_blank"
+                            rel="noreferrer noopener"
+                          >
+                            {displayUrl}
+                          </a>
+                        ) : (
+                          <span className="muted" title={img.url}>
+                            {displayUrl}
+                          </span>
+                        )}
                       </td>
                       <td className="muted">
                         {img.alt_text ?? "—"}
@@ -321,7 +324,8 @@ export function ImagesPage() {
                         </button>
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
