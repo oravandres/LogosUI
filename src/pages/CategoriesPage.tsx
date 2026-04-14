@@ -4,7 +4,7 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
-import { useMemo, useState, type FormEvent } from "react";
+import { useMemo, useRef, useState, type FormEvent } from "react";
 import { flushSync } from "react-dom";
 import { ApiError } from "@/api/client";
 import {
@@ -33,12 +33,17 @@ type DeleteCategoryVars = {
   id: string;
   onlyRowOnPage: boolean;
   pageOffset: number;
+  typeFilter: CategoryTypeFilter;
 };
 
 export function CategoriesPage() {
   const queryClient = useQueryClient();
   const [typeFilter, setTypeFilter] = useState<CategoryTypeFilter>("");
   const [offset, setOffset] = useState(0);
+
+  /** Latest list navigation; used to avoid clamping offset after the user moved away during delete. */
+  const listContextRef = useRef({ offset, typeFilter });
+  listContextRef.current = { offset, typeFilter };
 
   const listQuery = useQuery({
     queryKey: ["categories", { type: typeFilter, offset }],
@@ -67,7 +72,14 @@ export function CategoriesPage() {
   const deleteMutation = useMutation({
     mutationFn: ({ id }: DeleteCategoryVars) => deleteCategory(id),
     onSuccess: async (_data, vars) => {
-      if (vars.onlyRowOnPage && vars.pageOffset > 0) {
+      const ctx = listContextRef.current;
+      const stillOnSameView =
+        ctx.offset === vars.pageOffset && ctx.typeFilter === vars.typeFilter;
+      if (
+        vars.onlyRowOnPage &&
+        vars.pageOffset > 0 &&
+        stillOnSameView
+      ) {
         const next = Math.max(0, vars.pageOffset - CATEGORIES_PAGE_SIZE);
         flushSync(() => {
           setOffset(next);
@@ -258,6 +270,7 @@ export function CategoriesPage() {
                                 id: c.id,
                                 onlyRowOnPage: page.items.length === 1,
                                 pageOffset: offset,
+                                typeFilter,
                               });
                             }
                           }}
