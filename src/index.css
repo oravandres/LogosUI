@@ -114,6 +114,17 @@ code.wrap {
   margin-bottom: 1rem;
 }
 
+.toolbar-right {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem 1rem;
+}
+
+.fetch-hint {
+  font-size: 0.8125rem;
+}
+
 .toolbar-title {
   margin: 0;
 }
@@ -221,6 +232,11 @@ code.wrap {
 .table-wrap {
   overflow-x: auto;
   margin: 0 -0.25rem;
+}
+
+.table-wrap-placeholder {
+  opacity: 0.65;
+  transition: opacity 0.15s ease;
 }
 
 .data-table {

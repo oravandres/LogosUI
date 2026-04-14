@@ -1,5 +1,11 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { useMemo, useState, type FormEvent } from "react";
+import { flushSync } from "react-dom";
 import { ApiError } from "@/api/client";
 import {
   CATEGORIES_PAGE_SIZE,
@@ -23,6 +29,12 @@ const CREATE_TYPES: Exclude<CategoryTypeFilter, "">[] = [
   "author",
 ];
 
+type DeleteCategoryVars = {
+  id: string;
+  onlyRowOnPage: boolean;
+  pageOffset: number;
+};
+
 export function CategoriesPage() {
   const queryClient = useQueryClient();
   const [typeFilter, setTypeFilter] = useState<CategoryTypeFilter>("");
@@ -30,12 +42,14 @@ export function CategoriesPage() {
 
   const listQuery = useQuery({
     queryKey: ["categories", { type: typeFilter, offset }],
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       listCategories({
         limit: CATEGORIES_PAGE_SIZE,
         offset,
         type: typeFilter,
+        signal,
       }),
+    placeholderData: keepPreviousData,
   });
 
   const createMutation = useMutation({
@@ -51,8 +65,14 @@ export function CategoriesPage() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id: string) => deleteCategory(id),
-    onSuccess: async () => {
+    mutationFn: ({ id }: DeleteCategoryVars) => deleteCategory(id),
+    onSuccess: async (_data, vars) => {
+      if (vars.onlyRowOnPage && vars.pageOffset > 0) {
+        const next = Math.max(0, vars.pageOffset - CATEGORIES_PAGE_SIZE);
+        flushSync(() => {
+          setOffset(next);
+        });
+      }
       await queryClient.invalidateQueries({ queryKey: ["categories"] });
     },
   });
@@ -69,7 +89,9 @@ export function CategoriesPage() {
     : 0;
 
   const canPrev = offset > 0;
-  const canNext = page ? offset + page.items.length < page.total : false;
+  const canNext = page
+    ? page.offset + page.items.length < page.total
+    : false;
 
   const onFilterChange = (next: CategoryTypeFilter) => {
     setTypeFilter(next);
@@ -145,41 +167,62 @@ export function CategoriesPage() {
         {formError ? <p className="error">{formError}</p> : null}
       </div>
 
-      <div className="panel">
+      <div
+        className="panel"
+        aria-busy={listQuery.isFetching && Boolean(page)}
+      >
         <div className="toolbar">
           <h3 className="panel-title toolbar-title">All categories</h3>
-          <label className="field inline">
-            <span className="field-label">Filter by type</span>
-            <select
-              className="input input-compact"
-              value={typeFilter}
-              onChange={(ev) =>
-                onFilterChange(ev.target.value as CategoryTypeFilter)
-              }
-              disabled={listQuery.isFetching}
-            >
+          <div className="toolbar-right">
+            {listQuery.isFetching && page ? (
+              <span className="muted fetch-hint" aria-live="polite">
+                Updating…
+              </span>
+            ) : null}
+            <label className="field inline">
+              <span className="field-label">Filter by type</span>
+              <select
+                className="input input-compact"
+                value={typeFilter}
+                onChange={(ev) =>
+                  onFilterChange(ev.target.value as CategoryTypeFilter)
+                }
+              >
               {TYPE_OPTIONS.map((o) => (
                 <option key={o.value || "all"} value={o.value}>
                   {o.label}
                 </option>
               ))}
             </select>
-          </label>
+            </label>
+          </div>
         </div>
 
-        {listQuery.isPending ? (
+        {listQuery.isPending && !page ? (
           <p className="muted">Loading…</p>
-        ) : listQuery.isError ? (
+        ) : listQuery.isError && !page ? (
           <p className="error">
             {listQuery.error instanceof ApiError
               ? listQuery.error.message
               : String(listQuery.error)}
           </p>
-        ) : page && page.items.length === 0 ? (
+        ) : listQuery.isError && page ? (
+          <p className="error" role="alert">
+            Could not refresh the list. Showing previous results.
+          </p>
+        ) : null}
+
+        {page && page.items.length === 0 && !listQuery.isPending ? (
           <p className="muted">No categories in this view.</p>
-        ) : page ? (
+        ) : page && page.items.length > 0 ? (
           <>
-            <div className="table-wrap">
+            <div
+              className={
+                listQuery.isPlaceholderData
+                  ? "table-wrap table-wrap-placeholder"
+                  : "table-wrap"
+              }
+            >
               <table className="data-table">
                 <thead>
                   <tr>
@@ -204,13 +247,18 @@ export function CategoriesPage() {
                           type="button"
                           className="btn btn-danger btn-small"
                           disabled={deleteMutation.isPending}
+                          aria-label={`Delete category ${c.name}`}
                           onClick={() => {
                             if (
                               window.confirm(
                                 `Delete category “${c.name}” (${c.type})?`
                               )
                             ) {
-                              deleteMutation.mutate(c.id);
+                              deleteMutation.mutate({
+                                id: c.id,
+                                onlyRowOnPage: page.items.length === 1,
+                                pageOffset: offset,
+                              });
                             }
                           }}
                         >
@@ -232,7 +280,7 @@ export function CategoriesPage() {
                 <button
                   type="button"
                   className="btn"
-                  disabled={!canPrev || listQuery.isFetching}
+                  disabled={!canPrev}
                   onClick={() =>
                     setOffset((o) => Math.max(0, o - CATEGORIES_PAGE_SIZE))
                   }
@@ -242,7 +290,7 @@ export function CategoriesPage() {
                 <button
                   type="button"
                   className="btn"
-                  disabled={!canNext || listQuery.isFetching}
+                  disabled={!canNext}
                   onClick={() => setOffset((o) => o + CATEGORIES_PAGE_SIZE)}
                 >
                   Next

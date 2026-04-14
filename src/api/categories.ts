@@ -17,6 +17,8 @@ export type ListCategoriesParams = {
   offset?: number;
   /** When empty, no `type` query param is sent (all types). */
   type?: CategoryTypeFilter;
+  /** Pass from React Query `queryFn` context to cancel superseded requests. */
+  signal?: AbortSignal;
 };
 
 export function listCategories(
@@ -31,7 +33,9 @@ export function listCategories(
     search.set("type", params.type);
   }
   const q = search.toString();
-  return fetchJson<PaginatedResponse<Category>>(`${API_PREFIX}?${q}`);
+  return fetchJson<PaginatedResponse<Category>>(`${API_PREFIX}?${q}`, {
+    signal: params.signal,
+  });
 }
 
 export function createCategory(
