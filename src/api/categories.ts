@@ -10,6 +10,9 @@ const API_PREFIX = "/api/v1/categories";
 /** Matches Logos `model.DefaultLimit` (see `internal/model/pagination.go`). */
 export const CATEGORIES_PAGE_SIZE = 20;
 
+/** Matches Logos `MaxLimit` for paged fetches. */
+export const CATEGORY_LIST_MAX_LIMIT = 100;
+
 export type CategoryTypeFilter = "" | "image" | "quote" | "author";
 
 export type ListCategoriesParams = {
@@ -36,6 +39,36 @@ export function listCategories(
   return fetchJson<PaginatedResponse<Category>>(`${API_PREFIX}?${q}`, {
     signal: params.signal,
   });
+}
+
+/**
+ * Fetches every category of a fixed type by paging until the server returns a
+ * short page or the reported total is reached.
+ */
+export async function listAllCategoriesByType(
+  type: Exclude<CategoryTypeFilter, "">,
+  signal?: AbortSignal
+): Promise<Category[]> {
+  const out: Category[] = [];
+  let offset = 0;
+  for (;;) {
+    const page = await listCategories({
+      type,
+      limit: CATEGORY_LIST_MAX_LIMIT,
+      offset,
+      signal,
+    });
+    out.push(...page.items);
+    if (
+      page.items.length === 0 ||
+      page.items.length < CATEGORY_LIST_MAX_LIMIT ||
+      out.length >= page.total
+    ) {
+      break;
+    }
+    offset += CATEGORY_LIST_MAX_LIMIT;
+  }
+  return out;
 }
 
 export function createCategory(

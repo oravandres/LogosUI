@@ -180,6 +180,28 @@ code.wrap {
   }
 }
 
+.form-grid-images .field-span-2 {
+  grid-column: 1 / -1;
+}
+
+.table-link {
+  color: #0369a1;
+  text-decoration: none;
+  word-break: break-all;
+}
+
+.table-link:hover {
+  text-decoration: underline;
+}
+
+.id-chip {
+  display: inline-block;
+  max-width: 7rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+}
+
 .form-actions {
   grid-column: 1 / -1;
 }
