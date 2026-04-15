@@ -13,6 +13,7 @@ import {
   createCategory,
   deleteCategory,
   listCategories,
+  updateCategory,
 } from "@/api/categories";
 import type { CategoryWriteBody } from "@/api/types";
 
@@ -34,6 +35,11 @@ type DeleteCategoryVars = {
   onlyRowOnPage: boolean;
   pageOffset: number;
   typeFilter: CategoryTypeFilter;
+};
+
+type UpdateCategoryVars = {
+  id: string;
+  body: CategoryWriteBody;
 };
 
 export function CategoriesPage() {
@@ -69,6 +75,19 @@ export function CategoriesPage() {
     },
   });
 
+  const updateMutation = useMutation({
+    mutationFn: ({ id, body }: UpdateCategoryVars) =>
+      updateCategory(id, body),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["categories"] });
+      setEditingId(null);
+      setEditError(null);
+    },
+    onError: (err) => {
+      setEditError(err instanceof ApiError ? err.message : String(err));
+    },
+  });
+
   const deleteMutation = useMutation({
     mutationFn: ({ id }: DeleteCategoryVars) => deleteCategory(id),
     onSuccess: async (_data, vars) => {
@@ -93,6 +112,35 @@ export function CategoriesPage() {
   const [formType, setFormType] =
     useState<CategoryWriteBody["type"]>("quote");
   const [formError, setFormError] = useState<string | null>(null);
+
+  // Inline edit state
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editType, setEditType] = useState<CategoryWriteBody["type"]>("quote");
+  const [editError, setEditError] = useState<string | null>(null);
+
+  const startEditing = (id: string, name: string, type: string) => {
+    setEditingId(id);
+    setEditName(name);
+    setEditType(type as CategoryWriteBody["type"]);
+    setEditError(null);
+  };
+
+  const cancelEditing = () => {
+    setEditingId(null);
+    setEditError(null);
+  };
+
+  const submitEdit = () => {
+    if (!editingId) return;
+    const name = editName.trim();
+    if (!name) {
+      setEditError("Name is required.");
+      return;
+    }
+    setEditError(null);
+    updateMutation.mutate({ id: editingId, body: { name, type: editType } });
+  };
 
   const page = listQuery.data;
   const rangeStart = page ? page.offset + 1 : 0;
@@ -126,6 +174,8 @@ export function CategoriesPage() {
     if (!e) return null;
     return e instanceof ApiError ? e.message : String(e);
   }, [deleteMutation.error]);
+
+  const isMutating = updateMutation.isPending || deleteMutation.isPending;
 
   return (
     <section className="page">
@@ -245,41 +295,110 @@ export function CategoriesPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {page.items.map((c) => (
-                    <tr key={c.id}>
-                      <td>{c.name}</td>
-                      <td>
-                        <code>{c.type}</code>
-                      </td>
-                      <td className="muted nowrap">
-                        {formatDate(c.created_at)}
-                      </td>
-                      <td className="actions">
-                        <button
-                          type="button"
-                          className="btn btn-danger btn-small"
-                          disabled={deleteMutation.isPending}
-                          aria-label={`Delete category ${c.name}`}
-                          onClick={() => {
-                            if (
-                              window.confirm(
-                                `Delete category “${c.name}” (${c.type})?`
+                  {page.items.map((c) =>
+                    editingId === c.id ? (
+                      <tr key={c.id} className="editing">
+                        <td>
+                          <input
+                            className="edit-input"
+                            value={editName}
+                            onChange={(ev) => setEditName(ev.target.value)}
+                            maxLength={100}
+                            autoComplete="off"
+                            disabled={updateMutation.isPending}
+                            autoFocus
+                          />
+                        </td>
+                        <td>
+                          <select
+                            className="edit-select"
+                            value={editType}
+                            onChange={(ev) =>
+                              setEditType(
+                                ev.target.value as CategoryWriteBody["type"]
                               )
-                            ) {
-                              deleteMutation.mutate({
-                                id: c.id,
-                                onlyRowOnPage: page.items.length === 1,
-                                pageOffset: offset,
-                                typeFilter,
-                              });
                             }
-                          }}
-                        >
-                          Delete
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
+                            disabled={updateMutation.isPending}
+                          >
+                            {CREATE_TYPES.map((t) => (
+                              <option key={t} value={t}>
+                                {t}
+                              </option>
+                            ))}
+                          </select>
+                        </td>
+                        <td className="muted nowrap">
+                          {formatDate(c.created_at)}
+                        </td>
+                        <td className="actions">
+                          <div className="btn-group">
+                            <button
+                              type="button"
+                              className="btn btn-success btn-small"
+                              disabled={updateMutation.isPending}
+                              onClick={submitEdit}
+                            >
+                              {updateMutation.isPending ? "Saving…" : "Save"}
+                            </button>
+                            <button
+                              type="button"
+                              className="btn btn-small"
+                              disabled={updateMutation.isPending}
+                              onClick={cancelEditing}
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ) : (
+                      <tr key={c.id}>
+                        <td>{c.name}</td>
+                        <td>
+                          <code>{c.type}</code>
+                        </td>
+                        <td className="muted nowrap">
+                          {formatDate(c.created_at)}
+                        </td>
+                        <td className="actions">
+                          <div className="btn-group">
+                            <button
+                              type="button"
+                              className="btn btn-small"
+                              disabled={isMutating}
+                              onClick={() =>
+                                startEditing(c.id, c.name, c.type)
+                              }
+                            >
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              className="btn btn-danger btn-small"
+                              disabled={isMutating}
+                              aria-label={`Delete category ${c.name}`}
+                              onClick={() => {
+                                if (
+                                  window.confirm(
+                                    `Delete category "${c.name}" (${c.type})?`
+                                  )
+                                ) {
+                                  deleteMutation.mutate({
+                                    id: c.id,
+                                    onlyRowOnPage: page.items.length === 1,
+                                    pageOffset: offset,
+                                    typeFilter,
+                                  });
+                                }
+                              }}
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  )}
                 </tbody>
               </table>
             </div>
@@ -312,6 +431,7 @@ export function CategoriesPage() {
             </div>
           </>
         ) : null}
+        {editError ? <p className="error">{editError}</p> : null}
         {deleteError ? <p className="error">{deleteError}</p> : null}
       </div>
     </section>

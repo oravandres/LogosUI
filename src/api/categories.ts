@@ -1,4 +1,4 @@
-import { fetchJson, postJson } from "@/api/client";
+import { fetchJson, postJson, putJson } from "@/api/client";
 import type {
   Category,
   CategoryWriteBody,
@@ -75,6 +75,22 @@ export function createCategory(
   body: CategoryWriteBody
 ): Promise<Category> {
   return postJson<Category>(API_PREFIX, body);
+}
+
+export function getCategory(
+  id: string,
+  signal?: AbortSignal
+): Promise<Category> {
+  return fetchJson<Category>(`${API_PREFIX}/${encodeURIComponent(id)}`, {
+    signal,
+  });
+}
+
+export function updateCategory(
+  id: string,
+  body: CategoryWriteBody
+): Promise<Category> {
+  return putJson<Category>(`${API_PREFIX}/${encodeURIComponent(id)}`, body);
 }
 
 export function deleteCategory(id: string): Promise<void> {

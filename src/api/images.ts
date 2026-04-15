@@ -1,4 +1,4 @@
-import { fetchJson, postJson } from "@/api/client";
+import { fetchJson, postJson, putJson } from "@/api/client";
 import type { Image, ImageWriteBody, PaginatedResponse } from "@/api/types";
 
 const API_PREFIX = "/api/v1/images";
@@ -31,8 +31,24 @@ export function listImages(
   });
 }
 
+export function getImage(
+  id: string,
+  signal?: AbortSignal
+): Promise<Image> {
+  return fetchJson<Image>(`${API_PREFIX}/${encodeURIComponent(id)}`, {
+    signal,
+  });
+}
+
 export function createImage(body: ImageWriteBody): Promise<Image> {
   return postJson<Image>(API_PREFIX, body);
+}
+
+export function updateImage(
+  id: string,
+  body: ImageWriteBody
+): Promise<Image> {
+  return putJson<Image>(`${API_PREFIX}/${encodeURIComponent(id)}`, body);
 }
 
 export function deleteImage(id: string): Promise<void> {
