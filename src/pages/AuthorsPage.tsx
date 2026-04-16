@@ -94,7 +94,10 @@ export function AuthorsPage() {
   });
 
   const authorCategoryOptions = authorCategoriesQuery.data ?? [];
-  const imageOptions = imagesPickerQuery.data?.items ?? [];
+  const imageOptions = useMemo(
+    () => imagesPickerQuery.data?.items ?? [],
+    [imagesPickerQuery.data]
+  );
 
   const listQuery = useQuery({
     queryKey: [
