@@ -9,6 +9,11 @@ import { listImages } from "@/api/images";
 import { listQuotes } from "@/api/quotes";
 import { listTags } from "@/api/tags";
 
+// React Query keeps the previously resolved `data` when a refetch errors and
+// raises `isError` alongside it. Treat cached data as the source of truth and
+// only fall back to the pending/empty placeholders when no data has ever been
+// loaded — otherwise a transient network blip would erase totals the user was
+// already looking at.
 type CountQuery = {
   isPending: boolean;
   isError: boolean;
@@ -65,14 +70,28 @@ export function HomePage() {
     })),
   });
 
-  const authorNameById = useMemo(() => {
-    const m = new Map<string, string>();
+  // Per-author display state: "success" → the fetched name, "error" → a stable
+  // "Unknown author" fallback so screen readers aren't stuck announcing a
+  // loading hint forever, otherwise the row renders the pending placeholder.
+  const authorDisplayById = useMemo(() => {
+    const m = new Map<string, { kind: "success"; name: string } | { kind: "error" }>();
     for (let i = 0; i < authorIds.length; i++) {
       const r = authorQueries[i];
-      if (r?.isSuccess) m.set(authorIds[i], r.data.name);
+      if (r?.isSuccess) m.set(authorIds[i], { kind: "success", name: r.data.name });
+      else if (r?.isError) m.set(authorIds[i], { kind: "error" });
     }
     return m;
   }, [authorIds, authorQueries]);
+
+  const quotesItems = recentQuotes.data?.items;
+  const hasRecentData = quotesItems !== undefined;
+  // When a refetch fails but cached data is still available, surface the error
+  // as a non-blocking warning banner above the list rather than tearing down
+  // the list the user was already reading.
+  const recentError =
+    recentQuotes.isError && hasRecentData
+      ? errorMessage(recentQuotes.error, "Failed to refresh recent quotes")
+      : null;
 
   return (
     <section className="page">
@@ -111,25 +130,28 @@ export function HomePage() {
 
       <div className="panel">
         <h3 className="panel-title">Recent quotes</h3>
-        {recentQuotes.isPending && <p className="muted">Loading…</p>}
-        {recentQuotes.isError && (
-          <p className="error" role="alert">
-            {recentQuotes.error instanceof ApiError
-              ? recentQuotes.error.message
-              : recentQuotes.error instanceof Error
-                ? recentQuotes.error.message
-                : "Failed to load recent quotes"}
+        {recentError && (
+          <p className="error" role="status">
+            {recentError}
           </p>
         )}
-        {recentQuotes.isSuccess && recentQuotes.data.items.length === 0 && (
+        {!hasRecentData && recentQuotes.isPending && (
+          <p className="muted">Loading…</p>
+        )}
+        {!hasRecentData && recentQuotes.isError && (
+          <p className="error" role="alert">
+            {errorMessage(recentQuotes.error, "Failed to load recent quotes")}
+          </p>
+        )}
+        {hasRecentData && quotesItems.length === 0 && (
           <p className="muted">
             No quotes yet. <Link to="/quotes">Create one.</Link>
           </p>
         )}
-        {recentQuotes.isSuccess && recentQuotes.data.items.length > 0 && (
+        {hasRecentData && quotesItems.length > 0 && (
           <ul className="recent-list">
-            {recentQuotes.data.items.map((q) => {
-              const authorName = authorNameById.get(q.author_id);
+            {quotesItems.map((q) => {
+              const author = authorDisplayById.get(q.author_id);
               return (
                 <li key={q.id} className="recent-item">
                   <Link to="/quotes" className="recent-title">
@@ -138,8 +160,10 @@ export function HomePage() {
                   <p className="recent-text">{q.text}</p>
                   <p className="recent-meta muted">
                     by{" "}
-                    {authorName ? (
-                      authorName
+                    {author?.kind === "success" ? (
+                      author.name
+                    ) : author?.kind === "error" ? (
+                      <span>Unknown author</span>
                     ) : (
                       <span aria-label="Loading author">…</span>
                     )}
@@ -163,11 +187,17 @@ function StatCard({
   label: string;
   q: CountQuery;
 }) {
-  const value = q.isPending
-    ? "…"
-    : q.isError || q.data == null
-      ? "—"
-      : q.data.total.toLocaleString();
+  // Prefer the last known total whenever it is available — even if the most
+  // recent refetch errored — so a brief network blip does not blank totals
+  // that were already successfully loaded. Fall back to the pending pip only
+  // when nothing has ever been fetched, and to the em-dash only when we are
+  // neither pending nor have any data in hand.
+  const value =
+    q.data?.total !== undefined
+      ? q.data.total.toLocaleString()
+      : q.isPending
+        ? "…"
+        : "—";
   return (
     <li className="stat-card">
       <Link to={to} className="stat-card-link" aria-label={`${label}: ${value}`}>
@@ -176,4 +206,10 @@ function StatCard({
       </Link>
     </li>
   );
+}
+
+function errorMessage(err: unknown, fallback: string): string {
+  if (err instanceof ApiError) return err.message;
+  if (err instanceof Error) return err.message;
+  return fallback;
 }

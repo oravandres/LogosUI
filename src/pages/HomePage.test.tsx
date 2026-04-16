@@ -39,13 +39,16 @@ vi.mock("@/api/quotes", () => ({
   listQuotes: (...args: unknown[]) => listQuotesMock(...args),
 }));
 
-function renderPage() {
-  const client = new QueryClient({
+function makeClient() {
+  return new QueryClient({
     defaultOptions: {
       queries: { retry: false },
       mutations: { retry: false },
     },
   });
+}
+
+function renderWithClient(client: QueryClient) {
   return render(
     <QueryClientProvider client={client}>
       <MemoryRouter>
@@ -53,6 +56,10 @@ function renderPage() {
       </MemoryRouter>
     </QueryClientProvider>
   );
+}
+
+function renderPage() {
+  return renderWithClient(makeClient());
 }
 
 function envelope<T>(total: number, items: T[] = []) {
@@ -203,5 +210,110 @@ describe("HomePage", () => {
     expect(
       screen.getByRole("link", { name: "Authors: 7" })
     ).toBeInTheDocument();
+  });
+
+  it("keeps the recent quotes list visible when a refetch fails", async () => {
+    listQuotesMock.mockRejectedValueOnce(new ApiError("blip", 503, null));
+    const client = makeClient();
+    // Seed the cache as if a previous successful fetch had populated it.
+    client.setQueryData(["home", "recent-quotes"], {
+      items: [
+        {
+          id: "q-1",
+          title: "Cached beginnings",
+          text: "Journey of a thousand miles.",
+          author_id: "a-1",
+          image_id: null,
+          category_id: null,
+          created_at: "2020-01-01T00:00:00.000Z",
+          updated_at: "2020-01-01T00:00:00.000Z",
+        },
+      ],
+      total: 3,
+      limit: 5,
+      offset: 0,
+    });
+    renderWithClient(client);
+
+    // Cached quote stays on screen despite the refetch failure.
+    expect(
+      await screen.findByRole("link", { name: "Cached beginnings" })
+    ).toBeInTheDocument();
+
+    // The refetch error surfaces as a non-blocking status banner — not an
+    // alert that replaces the list.
+    await waitFor(() => {
+      expect(screen.getByRole("status")).toHaveTextContent("blip");
+    });
+
+    // And the Quotes count card still reflects the last known total.
+    expect(
+      screen.getByRole("link", { name: "Quotes: 3" })
+    ).toBeInTheDocument();
+  });
+
+  it("keeps the last known count on a StatCard when its refetch errors", async () => {
+    listAuthorsMock.mockRejectedValueOnce(new ApiError("blip", 503, null));
+    const client = makeClient();
+    client.setQueryData(["home", "count", "authors"], {
+      items: [],
+      total: 42,
+      limit: 1,
+      offset: 0,
+    });
+    renderWithClient(client);
+
+    // The authors card uses the cached total up front…
+    expect(
+      await screen.findByRole("link", { name: "Authors: 42" })
+    ).toBeInTheDocument();
+
+    // …and keeps it even after the background refetch settles with an error.
+    await waitFor(() => {
+      expect(listAuthorsMock).toHaveBeenCalled();
+    });
+    expect(
+      screen.getByRole("link", { name: "Authors: 42" })
+    ).toBeInTheDocument();
+  });
+
+  it("falls back to 'Unknown author' when getAuthor fails for one row", async () => {
+    getAuthorMock.mockImplementation((id: string) => {
+      if (id === "a-1") {
+        return Promise.reject(new ApiError("gone", 404, null));
+      }
+      return Promise.resolve({
+        id: "a-2",
+        name: "Japanese Proverb",
+        bio: null,
+        born_date: null,
+        died_date: null,
+        image_id: null,
+        category_id: null,
+        created_at: "2020-01-01T00:00:00.000Z",
+        updated_at: "2020-01-01T00:00:00.000Z",
+      });
+    });
+
+    renderPage();
+
+    // Both quotes render.
+    expect(
+      await screen.findByRole("link", { name: "On beginnings" })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "On persistence" })
+    ).toBeInTheDocument();
+
+    // The row with the failing lookup settles on a stable fallback instead of
+    // a perpetual "Loading author" pip.
+    await waitFor(() => {
+      expect(screen.getByText("Unknown author")).toBeInTheDocument();
+    });
+    expect(
+      screen.queryByLabelText("Loading author")
+    ).not.toBeInTheDocument();
+    // The other row's author still resolves normally.
+    expect(screen.getByText(/by Japanese Proverb/)).toBeInTheDocument();
   });
 });
