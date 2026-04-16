@@ -14,6 +14,10 @@ const getAuthorMock = vi.fn();
 const listAllCategoriesByTypeMock = vi.fn();
 const listImagesMock = vi.fn();
 const getImageMock = vi.fn();
+const listQuoteTagsMock = vi.fn();
+const listAllTagsMock = vi.fn();
+const addTagToQuoteMock = vi.fn();
+const removeTagFromQuoteMock = vi.fn();
 
 vi.mock("@/api/quotes", () => ({
   QUOTES_PAGE_SIZE: 20,
@@ -36,6 +40,13 @@ vi.mock("@/api/categories", () => ({
 vi.mock("@/api/images", () => ({
   listImages: (...args: unknown[]) => listImagesMock(...args),
   getImage: (...args: unknown[]) => getImageMock(...args),
+}));
+
+vi.mock("@/api/tags", () => ({
+  listQuoteTags: (...args: unknown[]) => listQuoteTagsMock(...args),
+  listAllTags: (...args: unknown[]) => listAllTagsMock(...args),
+  addTagToQuote: (...args: unknown[]) => addTagToQuoteMock(...args),
+  removeTagFromQuote: (...args: unknown[]) => removeTagFromQuoteMock(...args),
 }));
 
 function renderPage() {
@@ -109,6 +120,14 @@ describe("QuotesPage", () => {
       ...sampleQuote(),
       title: "Updated",
     });
+    listQuoteTagsMock.mockResolvedValue([]);
+    listAllTagsMock.mockResolvedValue({
+      items: [],
+      total: 0,
+      truncated: false,
+    });
+    addTagToQuoteMock.mockResolvedValue(undefined);
+    removeTagFromQuoteMock.mockResolvedValue(undefined);
   });
 
   it("renders the quote from the list", async () => {
@@ -409,6 +428,126 @@ describe("QuotesPage", () => {
       );
       await screen.findByText("Quote is locked");
       expect(updateQuoteMock).toHaveBeenCalled();
+    });
+  });
+
+  describe("tag management", () => {
+    it("renders existing tag chips on the row", async () => {
+      listQuoteTagsMock.mockResolvedValue([
+        { id: "tag-1", name: "wisdom", created_at: "2020-01-01T00:00:00.000Z" },
+      ]);
+      renderPage();
+      expect(await screen.findByText("wisdom")).toBeInTheDocument();
+    });
+
+    it("opens the tag editor and adds a tag", async () => {
+      listAllTagsMock.mockResolvedValue({
+        items: [
+          { id: "tag-1", name: "wisdom", created_at: "2020-01-01T00:00:00.000Z" },
+          { id: "tag-2", name: "virtue", created_at: "2020-01-01T00:00:00.000Z" },
+        ],
+        total: 2,
+        truncated: false,
+      });
+      const user = userEvent.setup();
+      renderPage();
+      await screen.findByText("On Virtue");
+
+      await user.click(
+        screen.getByRole("button", { name: /manage tags for on virtue/i })
+      );
+
+      const select = await screen.findByRole("combobox", {
+        name: /add tag to on virtue/i,
+      });
+      await user.selectOptions(select, "tag-2");
+      await user.click(screen.getByRole("button", { name: /^add$/i }));
+
+      await waitFor(() =>
+        expect(addTagToQuoteMock).toHaveBeenCalledWith("quote-1", "tag-2")
+      );
+    });
+
+    it("removes an existing tag from the editor", async () => {
+      listQuoteTagsMock.mockResolvedValue([
+        { id: "tag-1", name: "wisdom", created_at: "2020-01-01T00:00:00.000Z" },
+      ]);
+      const user = userEvent.setup();
+      renderPage();
+      await screen.findByText("On Virtue");
+
+      await user.click(
+        screen.getByRole("button", { name: /manage tags for on virtue/i })
+      );
+
+      const removeBtn = await screen.findByRole("button", {
+        name: /remove tag wisdom from on virtue/i,
+      });
+      await user.click(removeBtn);
+
+      await waitFor(() =>
+        expect(removeTagFromQuoteMock).toHaveBeenCalledWith("quote-1", "tag-1")
+      );
+    });
+
+    it("surfaces parent-404 (quote gone) as a stable refresh prompt", async () => {
+      listQuoteTagsMock.mockRejectedValue(
+        new ApiError("quote not found", 404, { error: "quote not found" })
+      );
+      const user = userEvent.setup();
+      renderPage();
+      await screen.findByText("On Virtue");
+
+      await user.click(
+        screen.getByRole("button", { name: /manage tags for on virtue/i })
+      );
+
+      expect(
+        await screen.findByText(
+          /this quote no longer exists on the server\. close this panel and refresh the list\./i
+        )
+      ).toBeInTheDocument();
+
+      // Add panel must not render when the parent is gone.
+      expect(
+        screen.queryByRole("combobox", { name: /add tag to on virtue/i })
+      ).not.toBeInTheDocument();
+    });
+
+    it("surfaces child-422 (tag gone) and refreshes the tag cache", async () => {
+      listAllTagsMock.mockResolvedValue({
+        items: [
+          { id: "tag-1", name: "wisdom", created_at: "2020-01-01T00:00:00.000Z" },
+        ],
+        total: 1,
+        truncated: false,
+      });
+      addTagToQuoteMock.mockRejectedValueOnce(
+        new ApiError("referenced tag does not exist", 422, {
+          error: "referenced tag does not exist",
+        })
+      );
+      const user = userEvent.setup();
+      renderPage();
+      await screen.findByText("On Virtue");
+
+      await user.click(
+        screen.getByRole("button", { name: /manage tags for on virtue/i })
+      );
+
+      const select = await screen.findByRole("combobox", {
+        name: /add tag to on virtue/i,
+      });
+      await user.selectOptions(select, "tag-1");
+      await user.click(screen.getByRole("button", { name: /^add$/i }));
+
+      expect(
+        await screen.findByText(
+          /the selected tag no longer exists\. refreshing the tag list/i
+        )
+      ).toBeInTheDocument();
+      // The mutation must have been attempted before the message appears.
+      expect(addTagToQuoteMock).toHaveBeenCalledWith("quote-1", "tag-1");
     });
   });
 });
