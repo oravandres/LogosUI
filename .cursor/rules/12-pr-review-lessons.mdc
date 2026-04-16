@@ -1,0 +1,39 @@
+---
+description: Concrete UI patterns from PR review feedback — avoid repeating these mistakes
+globs:
+  - "**/*.{ts,tsx}"
+  - "src/**/*.ts"
+  - "src/**/*.tsx"
+alwaysApply: true
+---
+
+Patterns that caused real PR review rounds on LogosUI. Follow these to get PRs right the first time.
+
+## React Query (TanStack Query)
+
+- Pass **`AbortSignal`** from `queryFn: ({ signal }) => ...` into API helpers that call `fetch`, so superseded list requests are cancelled when filters or pages change quickly.
+- For **paginated or filtered lists**, use **`placeholderData: keepPreviousData`** (or the current library equivalent) so in-flight refetches do **not** replace the whole table with a loading-only state. Prefer an **`aria-busy`** region / subtle “Updating…” hint and optional dimming while **`isPlaceholderData`** is true, instead of unmounting the table and losing focus on pager or filter controls.
+- **Reset `offset` in the same state transition as the new filter or search**, not in a later `useEffect` that reacts to `appliedSearch` / filter state. A deferred effect issues an **extra** `list*` request with the **stale** offset and can flash an empty page. Reset inside the filter handler and inside the **debounced** callback that commits search text (together with `setAppliedSearch`).
+- After **delete** removes the **last row on a page**, clamp **`offset`** to the previous page when needed. If you **`flushSync` + `setOffset`** before `invalidateQueries`, only do so when the user **still** matches the list context from when delete started (compare mutation variables to a **ref** holding current `offset`, filter ids, and applied search); otherwise navigation during the mutation must not be overwritten.
+- Repeated row actions (e.g. **Delete**) need **row-specific** accessible names (`aria-label` including entity name or stable id), not identical visible labels for every row.
+
+## Untrusted strings in the DOM
+
+- **Never** use a server-controlled string as **`<a href>`** without **scheme allowlisting**. Prefer parsing with `URL` and only allow **`http:`** and **`https:`**; render **non-link** text (e.g. `<span>` with `title` for the full value) for `javascript:`, `data:`, or other schemes. Applies to image URLs, file paths exposed as links, etc.
+
+## Pickers, dropdowns, and large collections
+
+- Do **not** load **unbounded** or **fully paged-through** corpora on mount just to fill a **`<select>`** (e.g. every image in the system). Prefer **lazy** loading: `enabled: false` until a user gesture (**`onFocus`**, button, or combobox open), **bounded** `limit`, or a **search-driven** async control.
+
+## Vite and environment files
+
+- Require critical public env vars (e.g. **`VITE_*` API base URL**) at **`vite build`** time when production bundles must not ship without them (fail in `vite.config.ts` / `loadEnv`, not only on first browser request).
+- **`.gitignore`**: ignore **`.env.*`** but **un-ignore** committed templates such as **`.env.example`** (`!.env.example`) so optional env files are never committed by mistake.
+
+## Shared `fetch` helpers
+
+- Do **not** set **`Content-Type: application/json`** on every request body in a generic helper; it breaks **`FormData`**, **`Blob`**, etc. Restrict JSON headers to **explicit JSON helpers** (e.g. `postJson` / `putJson` that stringify the body).
+
+## Lockfile
+
+- Commit **`package-lock.json`** (or the repo’s chosen lockfile) so **`npm ci`** and CI are deterministic.
