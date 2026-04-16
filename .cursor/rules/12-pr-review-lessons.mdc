@@ -45,6 +45,7 @@ Patterns that caused real PR review rounds on LogosUI. Follow these to get PRs r
   - Provide a **visible** active-option style that is **distinct** from the selected/committed style (e.g. outline + background), so the highlighted item is unambiguous even when it differs from the committed value.
   - Commit on click via **`onMouseDown` with `preventDefault`** so the click does not first blur the input and get swallowed by the listbox unmounting.
   - If you cannot afford this full keyboard contract, use a **native `<select>`** (search by typing and arrow navigation come for free) rather than shipping a mouse-only combobox.
+- The keyboard contract above is implemented once in **`src/components/Combobox.tsx`**. New pickers should compose this primitive (pass `options`, `value`, `query`, `displayValue`, `isOpen`, and slot content for header/footer/empty-state) instead of re-implementing key handling, `aria-activedescendant`, or scroll-into-view. Do not fork the contract for one-off components — extend the primitive if a new behavior is genuinely needed and add a test for it.
 
 ## Async editors against sub-resources (parent + children)
 
