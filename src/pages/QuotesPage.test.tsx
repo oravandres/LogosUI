@@ -229,6 +229,101 @@ describe("QuotesPage", () => {
         })
       );
     });
+
+    it("supports keyboard navigation: ArrowDown + Enter commits the highlighted author", async () => {
+      const aristotle = { ...sampleAuthor(), id: "auth-1", name: "Aristotle" };
+      const plato = { ...sampleAuthor(), id: "auth-2", name: "Plato" };
+      const socrates = { ...sampleAuthor(), id: "auth-3", name: "Socrates" };
+      listAuthorsMock.mockResolvedValue({
+        items: [aristotle, plato, socrates],
+        total: 3,
+        offset: 0,
+        limit: 20,
+      });
+      getAuthorMock.mockImplementation((id: string) => {
+        if (id === "auth-2") return Promise.resolve(plato);
+        if (id === "auth-3") return Promise.resolve(socrates);
+        return Promise.resolve(aristotle);
+      });
+
+      const user = userEvent.setup();
+      renderPage();
+      await screen.findByText("On Virtue");
+
+      const authorCombo = screen.getByRole("combobox", { name: "Author" });
+      await user.click(authorCombo);
+      await screen.findByRole("option", { name: "Aristotle" });
+
+      // activeIndex starts at 0 (Aristotle). ArrowDown → Plato.
+      await user.keyboard("{ArrowDown}");
+      // aria-activedescendant should now point at Plato.
+      await waitFor(() => {
+        const descId = authorCombo.getAttribute("aria-activedescendant");
+        const active = descId ? document.getElementById(descId) : null;
+        expect(active?.textContent).toBe("Plato");
+      });
+
+      await user.keyboard("{Enter}");
+
+      await waitFor(() =>
+        expect((authorCombo as HTMLInputElement).value).toBe("Plato")
+      );
+
+      const textboxes = screen.getAllByRole("textbox");
+      const titleField = textboxes.find(
+        (el) => (el as HTMLInputElement).maxLength === 500
+      );
+      const textField = textboxes.find((el) => el.tagName === "TEXTAREA");
+      await user.type(titleField as HTMLInputElement, "Dialogue");
+      await user.type(textField as HTMLTextAreaElement, "On the Republic.");
+
+      await user.click(screen.getByRole("button", { name: /^create$/i }));
+      await waitFor(() =>
+        expect(createQuoteMock).toHaveBeenCalledWith({
+          title: "Dialogue",
+          text: "On the Republic.",
+          author_id: "auth-2",
+          image_id: null,
+          category_id: null,
+        })
+      );
+    });
+  });
+
+  describe("filter combobox", () => {
+    it("lets keyboard-only users reach an author below 'All authors'", async () => {
+      const aristotle = { ...sampleAuthor(), id: "auth-1", name: "Aristotle" };
+      listAuthorsMock.mockResolvedValue({
+        items: [aristotle],
+        total: 1,
+        offset: 0,
+        limit: 20,
+      });
+
+      const user = userEvent.setup();
+      renderPage();
+      await screen.findByText("On Virtue");
+
+      const filterCombo = screen.getByRole("combobox", {
+        name: "Filter by author",
+      });
+      await user.click(filterCombo);
+      // With allowNone, index 0 is the "All authors" row.
+      await screen.findByRole("option", { name: /all authors/i });
+      await screen.findByRole("option", { name: "Aristotle" });
+
+      // ArrowDown moves from "All authors" (0) to "Aristotle" (1).
+      await user.keyboard("{ArrowDown}");
+      await user.keyboard("{Enter}");
+
+      await waitFor(() => {
+        const lastCall =
+          listQuotesMock.mock.calls[listQuotesMock.mock.calls.length - 1]?.[0];
+        expect(lastCall).toEqual(
+          expect.objectContaining({ authorId: "auth-1" })
+        );
+      });
+    });
   });
 
   describe("inline edit", () => {
