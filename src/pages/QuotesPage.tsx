@@ -13,7 +13,6 @@ import {
 } from "react";
 import { flushSync } from "react-dom";
 import { ApiError } from "@/api/client";
-import { getAuthor, listAuthors } from "@/api/authors";
 import { listAllCategoriesByType } from "@/api/categories";
 import { getImage, listImages } from "@/api/images";
 import {
@@ -24,11 +23,12 @@ import {
   updateQuote,
 } from "@/api/quotes";
 import type { QuoteWriteBody } from "@/api/types";
+import { AuthorPicker } from "@/components/AuthorPicker";
 
 const SEARCH_DEBOUNCE_MS = 400;
 
-/** Bounded fetch for author/image pickers (lazy-loaded on first focus). */
-const PICKER_LIMIT = 50;
+/** Bounded fetch for the (optional) image picker. */
+const IMAGE_PICKER_LIMIT = 50;
 
 type DeleteQuoteVars = {
   id: string;
@@ -52,7 +52,6 @@ export function QuotesPage() {
   const [appliedTitle, setAppliedTitle] = useState("");
   const [offset, setOffset] = useState(0);
 
-  const [authorPickerArmed, setAuthorPickerArmed] = useState(false);
   const [imagePickerArmed, setImagePickerArmed] = useState(false);
 
   const lastAppliedTitleRef = useRef("");
@@ -88,27 +87,15 @@ export function QuotesPage() {
     staleTime: 60_000,
   });
 
-  const authorsPickerQuery = useQuery({
-    queryKey: ["authors", "picker", PICKER_LIMIT],
-    queryFn: ({ signal }) =>
-      listAuthors({ limit: PICKER_LIMIT, offset: 0, signal }),
-    enabled: authorPickerArmed,
-    staleTime: 60_000,
-  });
-
   const imagesPickerQuery = useQuery({
-    queryKey: ["images", "picker", PICKER_LIMIT],
+    queryKey: ["images", "picker", IMAGE_PICKER_LIMIT],
     queryFn: ({ signal }) =>
-      listImages({ limit: PICKER_LIMIT, offset: 0, signal }),
+      listImages({ limit: IMAGE_PICKER_LIMIT, offset: 0, signal }),
     enabled: imagePickerArmed,
     staleTime: 60_000,
   });
 
   const quoteCategoryOptions = quoteCategoriesQuery.data ?? [];
-  const authorOptions = useMemo(
-    () => authorsPickerQuery.data?.items ?? [],
-    [authorsPickerQuery.data]
-  );
   const imageOptions = useMemo(
     () => imagesPickerQuery.data?.items ?? [],
     [imagesPickerQuery.data]
@@ -199,31 +186,9 @@ export function QuotesPage() {
   const [editCategoryId, setEditCategoryId] = useState("");
   const [editError, setEditError] = useState<string | null>(null);
 
-  // Fallback lookups for inline edit when the current author/image isn't in
-  // the bounded picker window (so the edit <select> always has the row's
-  // actual value as a selectable option).
-  const authorMissingId = useMemo(() => {
-    if (!editingId || editAuthorId === "") return null;
-    if (authorOptions.some((a) => a.id === editAuthorId)) return null;
-    return editAuthorId;
-  }, [editingId, editAuthorId, authorOptions]);
-
-  const authorFallbackQuery = useQuery({
-    queryKey: ["authors", "edit-fallback", authorMissingId],
-    queryFn: ({ signal }) => getAuthor(authorMissingId!, signal),
-    enabled: authorMissingId !== null,
-    staleTime: 60_000,
-  });
-
-  const authorSelectOptions = useMemo(() => {
-    const items = [...authorOptions];
-    const extra = authorFallbackQuery.data;
-    if (extra && !items.some((a) => a.id === extra.id)) {
-      items.unshift(extra);
-    }
-    return items;
-  }, [authorOptions, authorFallbackQuery.data]);
-
+  // Fallback lookup for inline edit so the image <select> always has the
+  // row's current image as a selectable option, even when it falls outside
+  // the bounded image-picker window.
   const imageMissingId = useMemo(() => {
     if (!editingId || editImageId === "") return null;
     if (imageOptions.some((img) => img.id === editImageId)) return null;
@@ -261,8 +226,8 @@ export function QuotesPage() {
     setEditImageId(q.image_id ?? "");
     setEditCategoryId(q.category_id ?? "");
     setEditError(null);
-    // Arm the pickers so edit selects have options available.
-    setAuthorPickerArmed(true);
+    // Arm the image picker so edit select has options available. The
+    // author picker pulls its own data as the user interacts.
     setImagePickerArmed(true);
   };
 
@@ -353,8 +318,6 @@ export function QuotesPage() {
   }, [deleteMutation.error]);
 
   const categoryPickerLoading = quoteCategoriesQuery.isPending;
-  const authorPickerLoading =
-    authorPickerArmed && authorsPickerQuery.isPending;
   const imagePickerLoading =
     imagePickerArmed && imagesPickerQuery.isPending;
 
@@ -396,30 +359,22 @@ export function QuotesPage() {
               disabled={createMutation.isPending}
             />
           </label>
-          <label className="field">
+          <div className="field">
             <span className="field-label">Author</span>
             <span className="field-hint muted">
-              Focus to load up to {PICKER_LIMIT} authors (API default order).
+              Type to search authors by name — every author is reachable.
             </span>
-            <select
-              className="input"
+            <AuthorPicker
               value={formAuthorId}
-              onChange={(ev) => setFormAuthorId(ev.target.value)}
-              onFocus={() => setAuthorPickerArmed(true)}
-              disabled={createMutation.isPending || authorPickerLoading}
-            >
-              <option value="">Select an author…</option>
-              {authorOptions.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {truncateMiddle(a.name, 56)}
-                </option>
-              ))}
-            </select>
-          </label>
+              onChange={setFormAuthorId}
+              disabled={createMutation.isPending}
+              ariaLabel="Author"
+            />
+          </div>
           <label className="field">
             <span className="field-label">Image</span>
             <span className="field-hint muted">
-              Optional. Focus to load up to {PICKER_LIMIT} images.
+              Optional. Focus to load up to {IMAGE_PICKER_LIMIT} images.
             </span>
             <select
               className="input"
@@ -463,7 +418,6 @@ export function QuotesPage() {
           </div>
         </form>
         {quoteCategoriesQuery.isError ||
-        (authorPickerArmed && authorsPickerQuery.isError) ||
         (imagePickerArmed && imagesPickerQuery.isError) ? (
           <p className="error" role="alert">
             Some pickers failed to load. You can retry or refresh to populate
@@ -497,23 +451,18 @@ export function QuotesPage() {
                 aria-describedby="quotes-search-hint"
               />
             </label>
-            <label className="field inline">
+            <div className="field inline">
               <span className="field-label">Author</span>
-              <select
-                className="input input-compact"
+              <AuthorPicker
+                compact
+                allowNone
+                noneLabel="All authors"
                 value={authorFilterId}
-                onFocus={() => setAuthorPickerArmed(true)}
-                onChange={(ev) => onAuthorFilterChange(ev.target.value)}
-                disabled={authorPickerLoading}
-              >
-                <option value="">All</option>
-                {authorOptions.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {truncateMiddle(a.name, 32)}
-                  </option>
-                ))}
-              </select>
-            </label>
+                onChange={onAuthorFilterChange}
+                placeholder="All authors"
+                ariaLabel="Filter by author"
+              />
+            </div>
             <label className="field inline">
               <span className="field-label">Category</span>
               <select
@@ -599,27 +548,13 @@ export function QuotesPage() {
                           />
                         </td>
                         <td>
-                          <select
-                            className="edit-select"
+                          <AuthorPicker
+                            compact
                             value={editAuthorId}
-                            onChange={(ev) =>
-                              setEditAuthorId(ev.target.value)
-                            }
-                            disabled={
-                              updateMutation.isPending ||
-                              authorPickerLoading ||
-                              (authorMissingId !== null &&
-                                authorFallbackQuery.isPending)
-                            }
-                            aria-label={`Author — ${q.title}`}
-                          >
-                            <option value="">Select an author…</option>
-                            {authorSelectOptions.map((a) => (
-                              <option key={a.id} value={a.id}>
-                                {truncateMiddle(a.name, 32)}
-                              </option>
-                            ))}
-                          </select>
+                            onChange={setEditAuthorId}
+                            disabled={updateMutation.isPending}
+                            ariaLabel={`Author — ${q.title}`}
+                          />
                         </td>
                         <td>
                           <select

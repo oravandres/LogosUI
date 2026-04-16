@@ -92,7 +92,7 @@ describe("QuotesPage", () => {
       items: [sampleAuthor()],
       total: 1,
       offset: 0,
-      limit: 50,
+      limit: 20,
     });
     listAllCategoriesByTypeMock.mockResolvedValue([]);
     listImagesMock.mockResolvedValue({
@@ -162,6 +162,72 @@ describe("QuotesPage", () => {
       );
       expect(screen.getByText("Author is required.")).toBeInTheDocument();
       expect(createQuoteMock).not.toHaveBeenCalled();
+    });
+
+    it("lets the user search by name and select an author beyond the initial window", async () => {
+      const platoAuthor = {
+        ...sampleAuthor(),
+        id: "auth-plato",
+        name: "Plato",
+      };
+      listAuthorsMock.mockImplementation(
+        (params: { name?: string } = {}) => {
+          if ((params.name ?? "") === "Plato") {
+            return Promise.resolve({
+              items: [platoAuthor],
+              total: 1,
+              offset: 0,
+              limit: 20,
+            });
+          }
+          return Promise.resolve({
+            items: [sampleAuthor()],
+            total: 1,
+            offset: 0,
+            limit: 20,
+          });
+        }
+      );
+      getAuthorMock.mockImplementation((id: string) => {
+        if (id === "auth-plato") return Promise.resolve(platoAuthor);
+        return Promise.resolve(sampleAuthor());
+      });
+
+      const user = userEvent.setup();
+      renderPage();
+      await screen.findByText("On Virtue");
+
+      const authorCombo = screen.getByRole("combobox", { name: "Author" });
+      await user.click(authorCombo);
+      await user.type(authorCombo, "Plato");
+      const option = await screen.findByRole("option", { name: "Plato" });
+      await user.click(option);
+
+      await waitFor(() =>
+        expect((authorCombo as HTMLInputElement).value).toBe("Plato")
+      );
+
+      const textboxes = screen.getAllByRole("textbox");
+      const titleField = textboxes.find(
+        (el) => (el as HTMLInputElement).maxLength === 500
+      );
+      const textField = textboxes.find((el) => el.tagName === "TEXTAREA");
+      await user.type(titleField as HTMLInputElement, "On Justice");
+      await user.type(
+        textField as HTMLTextAreaElement,
+        "Justice in the soul."
+      );
+
+      await user.click(screen.getByRole("button", { name: /^create$/i }));
+      await waitFor(() =>
+        expect(createQuoteMock).toHaveBeenCalledWith({
+          title: "On Justice",
+          text: "Justice in the soul.",
+          author_id: "auth-plato",
+          image_id: null,
+          category_id: null,
+        })
+      );
     });
   });
 
