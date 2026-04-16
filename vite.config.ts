@@ -1,6 +1,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { defineConfig, loadEnv } from "vite";
+import { loadEnv } from "vite";
+import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 
 const rootDir = path.dirname(fileURLToPath(import.meta.url));
@@ -27,6 +28,10 @@ export default defineConfig(({ command, mode }) => {
     server: {
       port: 5173,
       strictPort: true,
+    },
+    test: {
+      environment: "jsdom",
+      setupFiles: "./src/test/setup.ts",
     },
   };
 });

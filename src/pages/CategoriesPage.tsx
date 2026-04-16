@@ -307,6 +307,7 @@ export function CategoriesPage() {
                             autoComplete="off"
                             disabled={updateMutation.isPending}
                             autoFocus
+                            aria-label={`Name — ${c.name}`}
                           />
                         </td>
                         <td>
@@ -319,6 +320,7 @@ export function CategoriesPage() {
                               )
                             }
                             disabled={updateMutation.isPending}
+                            aria-label={`Type — ${c.name}`}
                           >
                             {CREATE_TYPES.map((t) => (
                               <option key={t} value={t}>
@@ -337,6 +339,7 @@ export function CategoriesPage() {
                               className="btn btn-success btn-small"
                               disabled={updateMutation.isPending}
                               onClick={submitEdit}
+                              aria-label={`Save changes for category ${c.name}`}
                             >
                               {updateMutation.isPending ? "Saving…" : "Save"}
                             </button>
@@ -345,6 +348,7 @@ export function CategoriesPage() {
                               className="btn btn-small"
                               disabled={updateMutation.isPending}
                               onClick={cancelEditing}
+                              aria-label={`Cancel editing category ${c.name}`}
                             >
                               Cancel
                             </button>

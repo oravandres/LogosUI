@@ -4,7 +4,13 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+} from "react";
 import { flushSync } from "react-dom";
 import { ApiError } from "@/api/client";
 import {
@@ -15,7 +21,7 @@ import {
   updateAuthor,
 } from "@/api/authors";
 import { listAllCategoriesByType } from "@/api/categories";
-import { listImages } from "@/api/images";
+import { getImage, listImages } from "@/api/images";
 import type { AuthorWriteBody } from "@/api/types";
 
 const SEARCH_DEBOUNCE_MS = 400;
@@ -170,6 +176,28 @@ export function AuthorsPage() {
   const [editImageId, setEditImageId] = useState("");
   const [editCategoryId, setEditCategoryId] = useState("");
   const [editError, setEditError] = useState<string | null>(null);
+
+  const portraitMissingId = useMemo(() => {
+    if (!editingId || editImageId === "") return null;
+    if (imageOptions.some((img) => img.id === editImageId)) return null;
+    return editImageId;
+  }, [editingId, editImageId, imageOptions]);
+
+  const portraitFallbackQuery = useQuery({
+    queryKey: ["images", "edit-portrait-fallback", portraitMissingId],
+    queryFn: ({ signal }) => getImage(portraitMissingId!, signal),
+    enabled: portraitMissingId !== null,
+    staleTime: 60_000,
+  });
+
+  const portraitSelectOptions = useMemo(() => {
+    const items = [...imageOptions];
+    const extra = portraitFallbackQuery.data;
+    if (extra && !items.some((i) => i.id === extra.id)) {
+      items.unshift(extra);
+    }
+    return items;
+  }, [imageOptions, portraitFallbackQuery.data]);
 
   const startEditing = (a: {
     id: string;
@@ -478,6 +506,7 @@ export function AuthorsPage() {
                             autoComplete="off"
                             disabled={updateMutation.isPending}
                             autoFocus
+                            aria-label={`Name — ${a.name}`}
                           />
                         </td>
                         <td>
@@ -487,6 +516,7 @@ export function AuthorsPage() {
                             onChange={(ev) => setEditBio(ev.target.value)}
                             rows={2}
                             disabled={updateMutation.isPending}
+                            aria-label={`Bio — ${a.name}`}
                           />
                         </td>
                         <td>
@@ -496,6 +526,7 @@ export function AuthorsPage() {
                             value={editBorn}
                             onChange={(ev) => setEditBorn(ev.target.value)}
                             disabled={updateMutation.isPending}
+                            aria-label={`Born — ${a.name}`}
                           />
                         </td>
                         <td>
@@ -505,6 +536,7 @@ export function AuthorsPage() {
                             value={editDied}
                             onChange={(ev) => setEditDied(ev.target.value)}
                             disabled={updateMutation.isPending}
+                            aria-label={`Died — ${a.name}`}
                           />
                         </td>
                         <td>
@@ -514,7 +546,10 @@ export function AuthorsPage() {
                             onChange={(ev) =>
                               setEditCategoryId(ev.target.value)
                             }
-                            disabled={updateMutation.isPending}
+                            disabled={
+                              updateMutation.isPending || authorPickerLoading
+                            }
+                            aria-label={`Category — ${a.name}`}
                           >
                             <option value="">None</option>
                             {authorCategoryOptions.map((c) => (
@@ -532,11 +567,15 @@ export function AuthorsPage() {
                               setEditImageId(ev.target.value)
                             }
                             disabled={
-                              updateMutation.isPending || portraitPickerLoading
+                              updateMutation.isPending ||
+                              portraitPickerLoading ||
+                              (portraitMissingId !== null &&
+                                portraitFallbackQuery.isPending)
                             }
+                            aria-label={`Portrait image — ${a.name}`}
                           >
                             <option value="">None</option>
-                            {imageOptions.map((img) => (
+                            {portraitSelectOptions.map((img) => (
                               <option key={img.id} value={img.id}>
                                 {truncateMiddle(img.url, 40)}
                               </option>
@@ -553,6 +592,7 @@ export function AuthorsPage() {
                               className="btn btn-success btn-small"
                               disabled={updateMutation.isPending}
                               onClick={submitEdit}
+                              aria-label={`Save changes for author ${a.name}`}
                             >
                               {updateMutation.isPending ? "Saving…" : "Save"}
                             </button>
@@ -561,6 +601,7 @@ export function AuthorsPage() {
                               className="btn btn-small"
                               disabled={updateMutation.isPending}
                               onClick={cancelEditing}
+                              aria-label={`Cancel editing author ${a.name}`}
                             >
                               Cancel
                             </button>

@@ -328,6 +328,7 @@ export function ImagesPage() {
                 </thead>
                 <tbody>
                   {page.items.map((img) => {
+                    const rowAriaName = `${truncateUrl(img.url, 40)} (${img.id})`;
                     if (editingId === img.id) {
                       return (
                         <tr key={img.id} className="editing">
@@ -340,6 +341,7 @@ export function ImagesPage() {
                               autoComplete="off"
                               disabled={updateMutation.isPending}
                               autoFocus
+                              aria-label={`URL — ${rowAriaName}`}
                             />
                           </td>
                           <td>
@@ -350,6 +352,7 @@ export function ImagesPage() {
                               maxLength={500}
                               autoComplete="off"
                               disabled={updateMutation.isPending}
+                              aria-label={`Alt text — ${rowAriaName}`}
                             />
                           </td>
                           <td>
@@ -359,7 +362,11 @@ export function ImagesPage() {
                               onChange={(ev) =>
                                 setEditCategoryId(ev.target.value)
                               }
-                              disabled={updateMutation.isPending}
+                              disabled={
+                                updateMutation.isPending ||
+                                imageCategoriesQuery.isPending
+                              }
+                              aria-label={`Category — ${rowAriaName}`}
                             >
                               <option value="">None</option>
                               {imageCategoryOptions.map((c) => (
@@ -379,6 +386,7 @@ export function ImagesPage() {
                                 className="btn btn-success btn-small"
                                 disabled={updateMutation.isPending}
                                 onClick={submitEdit}
+                                aria-label={`Save changes for image ${rowAriaName}`}
                               >
                                 {updateMutation.isPending ? "Saving…" : "Save"}
                               </button>
@@ -387,6 +395,7 @@ export function ImagesPage() {
                                 className="btn btn-small"
                                 disabled={updateMutation.isPending}
                                 onClick={cancelEditing}
+                                aria-label={`Cancel editing image ${rowAriaName}`}
                               >
                                 Cancel
                               </button>
