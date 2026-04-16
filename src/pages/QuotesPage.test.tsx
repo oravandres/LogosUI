@@ -514,14 +514,21 @@ describe("QuotesPage", () => {
       ).not.toBeInTheDocument();
     });
 
-    it("surfaces child-422 (tag gone) and refreshes the tag cache", async () => {
-      listAllTagsMock.mockResolvedValue({
-        items: [
-          { id: "tag-1", name: "wisdom", created_at: "2020-01-01T00:00:00.000Z" },
-        ],
-        total: 1,
-        truncated: false,
-      });
+    it("surfaces child-422 (tag gone), clears the stale id, and disables Add", async () => {
+      // Initial picker has tag-1; after the cache refresh it is gone.
+      listAllTagsMock
+        .mockResolvedValueOnce({
+          items: [
+            {
+              id: "tag-1",
+              name: "wisdom",
+              created_at: "2020-01-01T00:00:00.000Z",
+            },
+          ],
+          total: 1,
+          truncated: false,
+        })
+        .mockResolvedValue({ items: [], total: 0, truncated: false });
       addTagToQuoteMock.mockRejectedValueOnce(
         new ApiError("referenced tag does not exist", 422, {
           error: "referenced tag does not exist",
@@ -539,15 +546,48 @@ describe("QuotesPage", () => {
         name: /add tag to on virtue/i,
       });
       await user.selectOptions(select, "tag-1");
-      await user.click(screen.getByRole("button", { name: /^add$/i }));
+
+      const addBtn = screen.getByRole("button", { name: /^add$/i });
+      expect(addBtn).toBeEnabled();
+      await user.click(addBtn);
 
       expect(
         await screen.findByText(
           /the selected tag no longer exists\. refreshing the tag list/i
         )
       ).toBeInTheDocument();
-      // The mutation must have been attempted before the message appears.
       expect(addTagToQuoteMock).toHaveBeenCalledWith("quote-1", "tag-1");
+
+      // The stale id is cleared and Add stays disabled, so a second click
+      // cannot resubmit the same dead tag_id.
+      await waitFor(() =>
+        expect((select as HTMLSelectElement).value).toBe("")
+      );
+      expect(
+        screen.getByRole("button", { name: /^add$/i })
+      ).toBeDisabled();
+    });
+
+    it("on a non-404 read failure, hides the empty state and the add picker", async () => {
+      listQuoteTagsMock.mockRejectedValue(
+        new ApiError("upstream timeout", 500, {})
+      );
+      const user = userEvent.setup();
+      renderPage();
+      await screen.findByText("On Virtue");
+
+      await user.click(
+        screen.getByRole("button", { name: /manage tags for on virtue/i })
+      );
+
+      // The error is surfaced.
+      expect(await screen.findByText("upstream timeout")).toBeInTheDocument();
+      // But neither the "No tags yet." empty state nor the add picker
+      // render — otherwise the user would edit blind.
+      expect(screen.queryByText(/no tags yet\./i)).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("combobox", { name: /add tag to on virtue/i })
+      ).not.toBeInTheDocument();
     });
   });
 });

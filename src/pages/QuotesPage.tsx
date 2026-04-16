@@ -905,6 +905,10 @@ function QuoteTagsEditorRow({
             "The selected tag no longer exists. Refreshing the tag list…"
           );
           queryClient.invalidateQueries({ queryKey: ["tags"] });
+          // The submitted id is now known-bad; clear it so the user cannot
+          // resubmit the same dead tag while the cache repopulates. The Add
+          // button is also gated on the current value still being selectable.
+          setAddId("");
           return;
         }
         setLocalError(err.message);
@@ -940,6 +944,11 @@ function QuoteTagsEditorRow({
   const allTags = allTagsQuery.data?.items ?? [];
   const selectable = allTags.filter((t) => !currentIds.has(t.id));
   const busy = addMutation.isPending || removeMutation.isPending;
+  // Defense in depth: the Add button must not fire when `addId` references a
+  // tag that has dropped out of the refreshed list (e.g. after a 422), even
+  // if `setAddId("")` was missed for any reason.
+  const isAddIdSelectable =
+    addId !== "" && selectable.some((t) => t.id === addId);
 
   return (
     <tr className="tag-editor-row">
@@ -970,11 +979,18 @@ function QuoteTagsEditorRow({
             </p>
           ) : null}
 
-          {!parentMissing && tagsQuery.isPending ? (
+          {/*
+            Empty-state and the add UI both gate on `isSuccess` (not on the
+            absence of a 404). A non-404 read failure must not masquerade as
+            an empty quote, otherwise users edit blind: existing associations
+            stay hidden and `selectable` may include tags that are actually
+            already attached.
+          */}
+          {tagsQuery.isPending ? (
             <p className="muted">Loading tags…</p>
-          ) : !parentMissing && current.length === 0 ? (
+          ) : tagsQuery.isSuccess && current.length === 0 ? (
             <p className="muted">No tags yet.</p>
-          ) : !parentMissing ? (
+          ) : tagsQuery.isSuccess ? (
             <ul className="tag-chip-list">
               {current.map((t) => (
                 <li key={t.id} className="tag-chip">
@@ -993,7 +1009,7 @@ function QuoteTagsEditorRow({
             </ul>
           ) : null}
 
-          {!parentMissing ? (
+          {tagsQuery.isSuccess ? (
             <div className="tag-editor-add">
               <label className="field inline">
                 <span className="field-label">Add tag</span>
@@ -1021,9 +1037,11 @@ function QuoteTagsEditorRow({
               <button
                 type="button"
                 className="btn btn-small"
-                disabled={busy || addId === "" || allTagsQuery.isPending}
+                disabled={
+                  busy || allTagsQuery.isPending || !isAddIdSelectable
+                }
                 onClick={() => {
-                  if (addId !== "") {
+                  if (isAddIdSelectable) {
                     addMutation.mutate(addId);
                   }
                 }}
