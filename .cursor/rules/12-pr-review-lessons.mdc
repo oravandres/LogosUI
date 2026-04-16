@@ -24,6 +24,20 @@ Patterns that caused real PR review rounds on LogosUI. Follow these to get PRs r
 ## Pickers, dropdowns, and large collections
 
 - Do **not** load **unbounded** or **fully paged-through** corpora on mount just to fill a **`<select>`** (e.g. every image in the system). Prefer **lazy** loading: `enabled: false` until a user gesture (**`onFocus`**, button, or combobox open), **bounded** `limit`, or a **search-driven** async control.
+- A **bounded `limit: N`** picker (e.g. the first 50 options with no search) is acceptable **only** for **optional** foreign-key fields where “leave as-is / pick a common one” is the typical flow (e.g. a portrait image on an author). It is **not** acceptable for:
+  - **Required** foreign-key fields on create or edit, where values beyond the bounded window are unreachable (the form cannot be submitted with any author/image/… past position N).
+  - **List filters**, where the same blind spot silently hides content associated with any entity past the bounded window.
+  - Inline-edit cells where “preserve the row’s current value via a fallback `getX(id)` query” is **not** enough — the fallback only re-selects the existing value, it does not let the user change to a value outside the bounded window.
+  In these cases, use a **searchable async picker** driven by a server-side substring filter (e.g. `listAuthors({ name })` with a debounce and a bounded `limit` per search) so every value is reachable regardless of dataset size. Resolve the current selection’s display label via a separate `getX(id)` query so the input still shows the committed value when it falls outside the latest search page.
+- When you replace a native **`<select>`** with a custom combobox, you inherit the ARIA combobox contract. The listbox must be **fully keyboard-operable**, not just mouse-first:
+  - `role="combobox"` on the input, with `aria-expanded`, `aria-controls`, `aria-autocomplete`, and **`aria-activedescendant`** pointing at the currently highlighted option’s DOM id.
+  - **ArrowDown / ArrowUp** move the active option (with wrap-around); **Home / End** jump to the ends. ArrowDown/Up should also **open** a closed listbox.
+  - **Enter** commits the **active** option — never hard-code “Enter commits `items[0]`”, because that makes every option after the first keyboard-unreachable, and makes an optional “none / All” row at index 0 unreachable via Enter + ArrowDown in filter pickers.
+  - **Escape** closes the listbox.
+  - Mouse hover should update the active option so pointer and keyboard stay in sync, and the active option must be **scrolled into view** as the user arrows around.
+  - Provide a **visible** active-option style that is **distinct** from the selected/committed style (e.g. outline + background), so the highlighted item is unambiguous even when it differs from the committed value.
+  - Commit on click via **`onMouseDown` with `preventDefault`** so the click does not first blur the input and get swallowed by the listbox unmounting.
+  - If you cannot afford this full keyboard contract, use a **native `<select>`** (search by typing and arrow navigation come for free) rather than shipping a mouse-only combobox.
 
 ## Vite and environment files
 

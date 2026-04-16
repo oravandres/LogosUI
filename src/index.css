@@ -254,6 +254,21 @@ code.wrap {
   white-space: nowrap;
 }
 
+.form-grid-quotes .field-span-2 {
+  grid-column: 1 / -1;
+}
+
+.data-table-quotes {
+  font-size: 0.875rem;
+}
+
+.quote-text-cell {
+  max-width: 14rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .nowrap-strong {
   white-space: nowrap;
   font-weight: 500;
@@ -422,5 +437,70 @@ code.wrap {
   vertical-align: top;
   padding-top: 0.45rem;
   padding-bottom: 0.45rem;
+}
+
+/* ── Combobox (searchable picker) ── */
+
+.combobox {
+  position: relative;
+  display: block;
+  width: 100%;
+  max-width: 22rem;
+}
+
+.combobox-compact {
+  max-width: 14rem;
+}
+
+.combobox > .input {
+  width: 100%;
+}
+
+.combobox-listbox {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0;
+  right: 0;
+  z-index: 10;
+  max-height: 16rem;
+  overflow-y: auto;
+  margin: 0;
+  padding: 0.25rem 0;
+  list-style: none;
+  background: #fff;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgb(15 23 42 / 10%);
+}
+
+.combobox-option {
+  padding: 0.4rem 0.6rem;
+  cursor: pointer;
+  font-size: 0.9375rem;
+  color: #0f172a;
+}
+
+.combobox-option:hover {
+  background: #e0f2fe;
+}
+
+.combobox-option-selected {
+  background: #f0f9ff;
+  font-weight: 500;
+}
+
+.combobox-option-active {
+  background: #bae6fd;
+  outline: 2px solid #0284c7;
+  outline-offset: -2px;
+}
+
+.combobox-option-active.combobox-option-selected {
+  background: #7dd3fc;
+}
+
+.combobox-status {
+  padding: 0.4rem 0.6rem;
+  font-size: 0.875rem;
 }
 

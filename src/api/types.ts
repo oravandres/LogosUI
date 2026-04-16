@@ -60,6 +60,27 @@ export type AuthorWriteBody = {
   category_id: string | null;
 };
 
+/** Matches Logos `model.QuoteResponse`. */
+export type Quote = {
+  id: string;
+  title: string;
+  text: string;
+  author_id: string;
+  image_id: string | null;
+  category_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+/** Matches Logos `CreateQuoteRequest` / `UpdateQuoteRequest`. */
+export type QuoteWriteBody = {
+  title: string;
+  text: string;
+  author_id: string;
+  image_id: string | null;
+  category_id: string | null;
+};
+
 /** GET /api/v1/health success body. */
 export type HealthOk = { status: "healthy" };
 
