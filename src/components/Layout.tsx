@@ -18,6 +18,9 @@ export function Layout() {
           <NavLink to="/authors" className={navClass}>
             Authors
           </NavLink>
+          <NavLink to="/quotes" className={navClass}>
+            Quotes
+          </NavLink>
         </nav>
       </header>
       <main className="app-main">

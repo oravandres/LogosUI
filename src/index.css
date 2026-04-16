@@ -254,6 +254,21 @@ code.wrap {
   white-space: nowrap;
 }
 
+.form-grid-quotes .field-span-2 {
+  grid-column: 1 / -1;
+}
+
+.data-table-quotes {
+  font-size: 0.875rem;
+}
+
+.quote-text-cell {
+  max-width: 14rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .nowrap-strong {
   white-space: nowrap;
   font-weight: 500;
