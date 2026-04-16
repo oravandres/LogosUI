@@ -568,6 +568,61 @@ describe("QuotesPage", () => {
       ).toBeDisabled();
     });
 
+    it("on add-404 (parent gone after open), hides chips and the add picker", async () => {
+      listQuoteTagsMock.mockResolvedValue([
+        { id: "tag-1", name: "wisdom", created_at: "2020-01-01T00:00:00.000Z" },
+      ]);
+      listAllTagsMock.mockResolvedValue({
+        items: [
+          { id: "tag-2", name: "virtue", created_at: "2020-01-01T00:00:00.000Z" },
+        ],
+        total: 1,
+        truncated: false,
+      });
+      addTagToQuoteMock.mockRejectedValueOnce(
+        new ApiError("quote not found", 404, { error: "quote not found" })
+      );
+
+      const user = userEvent.setup();
+      renderPage();
+      await screen.findByText("On Virtue");
+
+      await user.click(
+        screen.getByRole("button", { name: /manage tags for on virtue/i })
+      );
+
+      // Initial open: existing chip + remove button + add picker all present.
+      expect(
+        await screen.findByRole("button", {
+          name: /remove tag wisdom from on virtue/i,
+        })
+      ).toBeInTheDocument();
+      const select = screen.getByRole("combobox", {
+        name: /add tag to on virtue/i,
+      });
+      await user.selectOptions(select, "tag-2");
+      await user.click(screen.getByRole("button", { name: /^add$/i }));
+
+      // Parent-missing banner appears.
+      expect(
+        await screen.findByText(
+          /this quote no longer exists on the server\. close this panel and refresh the list\./i
+        )
+      ).toBeInTheDocument();
+      // Editor controls collapse so the user cannot retry against a dead
+      // parent: no add picker, no remove buttons on stale chips.
+      await waitFor(() =>
+        expect(
+          screen.queryByRole("combobox", { name: /add tag to on virtue/i })
+        ).not.toBeInTheDocument()
+      );
+      expect(
+        screen.queryByRole("button", {
+          name: /remove tag wisdom from on virtue/i,
+        })
+      ).not.toBeInTheDocument();
+    });
+
     it("on a non-404 read failure, hides the empty state and the add picker", async () => {
       listQuoteTagsMock.mockRejectedValue(
         new ApiError("upstream timeout", 500, {})

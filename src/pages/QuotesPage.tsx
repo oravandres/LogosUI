@@ -871,6 +871,15 @@ function QuoteTagsEditorRow({
   const queryClient = useQueryClient();
   const [addId, setAddId] = useState("");
   const [localError, setLocalError] = useState<string | null>(null);
+  /**
+   * Sticky flag: once *any* request against this parent quote returns 404
+   * (the initial GET, or a subsequent POST), the panel becomes read-only and
+   * stays that way until the user closes it. This is important for the POST
+   * path because `tagsQuery` may still hold a stale success result from
+   * before the quote was deleted, which would otherwise keep the add UI
+   * rendered while the cache invalidation is in flight.
+   */
+  const [parentMissingLocal, setParentMissingLocal] = useState(false);
 
   const tagsQuery = useQuery({
     queryKey: ["quote-tags", quoteId],
@@ -895,9 +904,17 @@ function QuoteTagsEditorRow({
     onError: (err) => {
       if (err instanceof ApiError) {
         if (err.status === 404) {
-          setLocalError(
-            "This quote no longer exists on the server. Close this panel and refresh the list."
-          );
+          // Parent gone after the panel was already open. Latch the local
+          // flag so the editor controls hide immediately (the parent-missing
+          // banner alone is not enough — the add UI is gated on this), and
+          // invalidate the per-row cache so the chip cell on the quote row
+          // also flips to "gone" without waiting for a manual refresh.
+          setParentMissingLocal(true);
+          setLocalError(null);
+          setAddId("");
+          queryClient.invalidateQueries({
+            queryKey: ["quote-tags", quoteId],
+          });
           return;
         }
         if (err.status === 422) {
@@ -932,9 +949,10 @@ function QuoteTagsEditorRow({
   });
 
   const parentMissing =
-    tagsQuery.isError &&
-    tagsQuery.error instanceof ApiError &&
-    tagsQuery.error.status === 404;
+    parentMissingLocal ||
+    (tagsQuery.isError &&
+      tagsQuery.error instanceof ApiError &&
+      tagsQuery.error.status === 404);
 
   const current = useMemo(() => tagsQuery.data ?? [], [tagsQuery.data]);
   const currentIds = useMemo(
@@ -980,17 +998,21 @@ function QuoteTagsEditorRow({
           ) : null}
 
           {/*
-            Empty-state and the add UI both gate on `isSuccess` (not on the
-            absence of a 404). A non-404 read failure must not masquerade as
-            an empty quote, otherwise users edit blind: existing associations
-            stay hidden and `selectable` may include tags that are actually
-            already attached.
+            Empty-state, the chip list, and the add UI all gate on
+            `isSuccess && !parentMissing`. Two traps the gate has to cover:
+            1. A non-404 read failure must not masquerade as an empty quote
+               (would render "No tags yet." + add picker over an error).
+            2. A 404 from `addTagToQuote` after the panel is already open
+               must immediately hide the editor controls; relying on
+               `tagsQuery.isError` alone leaves a window where the stale
+               success result keeps the add UI rendered against a dead
+               parent. `parentMissingLocal` closes that window.
           */}
           {tagsQuery.isPending ? (
             <p className="muted">Loading tags…</p>
-          ) : tagsQuery.isSuccess && current.length === 0 ? (
+          ) : tagsQuery.isSuccess && !parentMissing && current.length === 0 ? (
             <p className="muted">No tags yet.</p>
-          ) : tagsQuery.isSuccess ? (
+          ) : tagsQuery.isSuccess && !parentMissing ? (
             <ul className="tag-chip-list">
               {current.map((t) => (
                 <li key={t.id} className="tag-chip">
@@ -1009,7 +1031,7 @@ function QuoteTagsEditorRow({
             </ul>
           ) : null}
 
-          {tagsQuery.isSuccess ? (
+          {tagsQuery.isSuccess && !parentMissing ? (
             <div className="tag-editor-add">
               <label className="field inline">
                 <span className="field-label">Add tag</span>
