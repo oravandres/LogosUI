@@ -10,6 +10,7 @@ import {
   useRef,
   useState,
   type FormEvent,
+  type ReactNode,
 } from "react";
 import { flushSync } from "react-dom";
 import { ApiError } from "@/api/client";
@@ -22,6 +23,12 @@ import {
   QUOTES_PAGE_SIZE,
   updateQuote,
 } from "@/api/quotes";
+import {
+  addTagToQuote,
+  listAllTags,
+  listQuoteTags,
+  removeTagFromQuote,
+} from "@/api/tags";
 import type { QuoteWriteBody } from "@/api/types";
 import { AuthorPicker } from "@/components/AuthorPicker";
 
@@ -179,6 +186,9 @@ export function QuotesPage() {
 
   // Inline edit state
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [managingTagsForId, setManagingTagsForId] = useState<string | null>(
+    null
+  );
   const [editTitle, setEditTitle] = useState("");
   const [editText, setEditText] = useState("");
   const [editAuthorId, setEditAuthorId] = useState("");
@@ -226,6 +236,9 @@ export function QuotesPage() {
     setEditImageId(q.image_id ?? "");
     setEditCategoryId(q.category_id ?? "");
     setEditError(null);
+    // Opening the inline edit closes any tag-management panel on the same or
+    // another row — only one row-level mode is active at a time.
+    setManagingTagsForId(null);
     // Arm the image picker so edit select has options available. The
     // author picker pulls its own data as the user interacts.
     setImagePickerArmed(true);
@@ -234,6 +247,16 @@ export function QuotesPage() {
   const cancelEditing = () => {
     setEditingId(null);
     setEditError(null);
+  };
+
+  const startManagingTags = (id: string) => {
+    setEditingId(null);
+    setEditError(null);
+    setManagingTagsForId(id);
+  };
+
+  const stopManagingTags = () => {
+    setManagingTagsForId(null);
   };
 
   const submitEdit = () => {
@@ -517,13 +540,18 @@ export function QuotesPage() {
                     <th>Author</th>
                     <th>Img.</th>
                     <th>Cat.</th>
+                    <th>Tags</th>
                     <th>Updated</th>
                     <th aria-label="Actions" />
                   </tr>
                 </thead>
                 <tbody>
-                  {page.items.map((q) =>
-                    editingId === q.id ? (
+                  {page.items.flatMap((q) => {
+                    const isEditing = editingId === q.id;
+                    const isManagingTags = managingTagsForId === q.id;
+                    const rows: ReactNode[] = [];
+                    rows.push(
+                      isEditing ? (
                       <tr key={q.id} className="editing">
                         <td>
                           <input
@@ -600,6 +628,9 @@ export function QuotesPage() {
                             ))}
                           </select>
                         </td>
+                        <td className="muted">
+                          <QuoteTagChips quoteId={q.id} />
+                        </td>
                         <td className="muted nowrap">
                           {formatDate(q.updated_at)}
                         </td>
@@ -651,6 +682,9 @@ export function QuotesPage() {
                             "—"
                           )}
                         </td>
+                        <td className="muted">
+                          <QuoteTagChips quoteId={q.id} />
+                        </td>
                         <td className="muted nowrap">
                           {formatDate(q.updated_at)}
                         </td>
@@ -663,6 +697,20 @@ export function QuotesPage() {
                               onClick={() => startEditing(q)}
                             >
                               Edit
+                            </button>
+                            <button
+                              type="button"
+                              className="btn btn-small"
+                              disabled={isMutating}
+                              aria-expanded={isManagingTags}
+                              aria-label={`Manage tags for ${q.title}`}
+                              onClick={() =>
+                                isManagingTags
+                                  ? stopManagingTags()
+                                  : startManagingTags(q.id)
+                              }
+                            >
+                              {isManagingTags ? "Close tags" : "Tags"}
                             </button>
                             <button
                               type="button"
@@ -692,7 +740,20 @@ export function QuotesPage() {
                         </td>
                       </tr>
                     )
-                  )}
+                    );
+                    if (!isEditing && isManagingTags) {
+                      rows.push(
+                        <QuoteTagsEditorRow
+                          key={`${q.id}-tags`}
+                          quoteId={q.id}
+                          quoteTitle={q.title}
+                          colSpan={8}
+                          onClose={stopManagingTags}
+                        />
+                      );
+                    }
+                    return rows;
+                  })}
                 </tbody>
               </table>
             </div>
@@ -745,4 +806,287 @@ function truncateMiddle(s: string, max: number): string {
   if (s.length <= max) return s;
   const half = Math.floor((max - 1) / 2);
   return `${s.slice(0, half)}…${s.slice(s.length - (max - 1 - half))}`;
+}
+
+/** Reads and renders the list of tags on a single quote as compact chips. */
+function QuoteTagChips({ quoteId }: { quoteId: string }) {
+  const query = useQuery({
+    queryKey: ["quote-tags", quoteId],
+    queryFn: ({ signal }) => listQuoteTags(quoteId, signal),
+    staleTime: 30_000,
+  });
+
+  if (query.isPending) {
+    return <span className="muted">…</span>;
+  }
+  if (query.isError) {
+    const err = query.error;
+    if (err instanceof ApiError && err.status === 404) {
+      return (
+        <span className="muted" title="Quote no longer exists on the server">
+          gone
+        </span>
+      );
+    }
+    return <span className="muted">—</span>;
+  }
+  const tags = query.data ?? [];
+  if (tags.length === 0) {
+    return <span className="muted">—</span>;
+  }
+  return (
+    <ul className="tag-chip-list tag-chip-list-readonly">
+      {tags.map((t) => (
+        <li key={t.id} className="tag-chip tag-chip-static">
+          {t.name}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+type QuoteTagsEditorRowProps = {
+  quoteId: string;
+  quoteTitle: string;
+  colSpan: number;
+  onClose: () => void;
+};
+
+/**
+ * Inline editor row for managing tag associations on a single quote.
+ *
+ * Error mapping mirrors the backend's parent-vs-child distinction:
+ * - `GET/POST .../tags` → `404` means the parent quote itself is gone
+ *   (show a stable "please refresh" message; do not retry blindly).
+ * - `POST .../tags` → `422` means the supplied `tag_id` is invalid
+ *   (usually a tag deleted elsewhere); refresh the tag cache and tell
+ *   the user their selection is stale.
+ */
+function QuoteTagsEditorRow({
+  quoteId,
+  quoteTitle,
+  colSpan,
+  onClose,
+}: QuoteTagsEditorRowProps) {
+  const queryClient = useQueryClient();
+  const [addId, setAddId] = useState("");
+  const [localError, setLocalError] = useState<string | null>(null);
+  /**
+   * Sticky flag: once *any* request against this parent quote returns 404
+   * (the initial GET, or a subsequent POST), the panel becomes read-only and
+   * stays that way until the user closes it. This is important for the POST
+   * path because `tagsQuery` may still hold a stale success result from
+   * before the quote was deleted, which would otherwise keep the add UI
+   * rendered while the cache invalidation is in flight.
+   */
+  const [parentMissingLocal, setParentMissingLocal] = useState(false);
+
+  const tagsQuery = useQuery({
+    queryKey: ["quote-tags", quoteId],
+    queryFn: ({ signal }) => listQuoteTags(quoteId, signal),
+  });
+
+  const allTagsQuery = useQuery({
+    queryKey: ["tags", "all"],
+    queryFn: ({ signal }) => listAllTags(signal),
+    staleTime: 60_000,
+  });
+
+  const addMutation = useMutation({
+    mutationFn: (tagId: string) => addTagToQuote(quoteId, tagId),
+    onSuccess: async () => {
+      setLocalError(null);
+      setAddId("");
+      await queryClient.invalidateQueries({
+        queryKey: ["quote-tags", quoteId],
+      });
+    },
+    onError: (err) => {
+      if (err instanceof ApiError) {
+        if (err.status === 404) {
+          // Parent gone after the panel was already open. Latch the local
+          // flag so the editor controls hide immediately (the parent-missing
+          // banner alone is not enough — the add UI is gated on this), and
+          // invalidate the per-row cache so the chip cell on the quote row
+          // also flips to "gone" without waiting for a manual refresh.
+          setParentMissingLocal(true);
+          setLocalError(null);
+          setAddId("");
+          queryClient.invalidateQueries({
+            queryKey: ["quote-tags", quoteId],
+          });
+          return;
+        }
+        if (err.status === 422) {
+          setLocalError(
+            "The selected tag no longer exists. Refreshing the tag list…"
+          );
+          queryClient.invalidateQueries({ queryKey: ["tags"] });
+          // The submitted id is now known-bad; clear it so the user cannot
+          // resubmit the same dead tag while the cache repopulates. The Add
+          // button is also gated on the current value still being selectable.
+          setAddId("");
+          return;
+        }
+        setLocalError(err.message);
+        return;
+      }
+      setLocalError(String(err));
+    },
+  });
+
+  const removeMutation = useMutation({
+    mutationFn: (tagId: string) => removeTagFromQuote(quoteId, tagId),
+    onSuccess: async () => {
+      setLocalError(null);
+      await queryClient.invalidateQueries({
+        queryKey: ["quote-tags", quoteId],
+      });
+    },
+    onError: (err) => {
+      setLocalError(err instanceof ApiError ? err.message : String(err));
+    },
+  });
+
+  const parentMissing =
+    parentMissingLocal ||
+    (tagsQuery.isError &&
+      tagsQuery.error instanceof ApiError &&
+      tagsQuery.error.status === 404);
+
+  const current = useMemo(() => tagsQuery.data ?? [], [tagsQuery.data]);
+  const currentIds = useMemo(
+    () => new Set(current.map((t) => t.id)),
+    [current]
+  );
+  const allTags = allTagsQuery.data?.items ?? [];
+  const selectable = allTags.filter((t) => !currentIds.has(t.id));
+  const busy = addMutation.isPending || removeMutation.isPending;
+  // Defense in depth: the Add button must not fire when `addId` references a
+  // tag that has dropped out of the refreshed list (e.g. after a 422), even
+  // if `setAddId("")` was missed for any reason.
+  const isAddIdSelectable =
+    addId !== "" && selectable.some((t) => t.id === addId);
+
+  return (
+    <tr className="tag-editor-row">
+      <td colSpan={colSpan}>
+        <div className="tag-editor">
+          <div className="tag-editor-header">
+            <strong>Tags for “{truncateMiddle(quoteTitle, 48)}”</strong>
+            <button
+              type="button"
+              className="btn btn-small"
+              onClick={onClose}
+              aria-label={`Done managing tags for ${quoteTitle}`}
+            >
+              Done
+            </button>
+          </div>
+
+          {parentMissing ? (
+            <p className="error" role="alert">
+              This quote no longer exists on the server. Close this panel and
+              refresh the list.
+            </p>
+          ) : tagsQuery.isError ? (
+            <p className="error" role="alert">
+              {tagsQuery.error instanceof ApiError
+                ? tagsQuery.error.message
+                : String(tagsQuery.error)}
+            </p>
+          ) : null}
+
+          {/*
+            Empty-state, the chip list, and the add UI all gate on
+            `isSuccess && !parentMissing`. Two traps the gate has to cover:
+            1. A non-404 read failure must not masquerade as an empty quote
+               (would render "No tags yet." + add picker over an error).
+            2. A 404 from `addTagToQuote` after the panel is already open
+               must immediately hide the editor controls; relying on
+               `tagsQuery.isError` alone leaves a window where the stale
+               success result keeps the add UI rendered against a dead
+               parent. `parentMissingLocal` closes that window.
+          */}
+          {tagsQuery.isPending ? (
+            <p className="muted">Loading tags…</p>
+          ) : tagsQuery.isSuccess && !parentMissing && current.length === 0 ? (
+            <p className="muted">No tags yet.</p>
+          ) : tagsQuery.isSuccess && !parentMissing ? (
+            <ul className="tag-chip-list">
+              {current.map((t) => (
+                <li key={t.id} className="tag-chip">
+                  <span>{t.name}</span>
+                  <button
+                    type="button"
+                    className="tag-chip-remove"
+                    disabled={busy}
+                    onClick={() => removeMutation.mutate(t.id)}
+                    aria-label={`Remove tag ${t.name} from ${quoteTitle}`}
+                  >
+                    ×
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+
+          {tagsQuery.isSuccess && !parentMissing ? (
+            <div className="tag-editor-add">
+              <label className="field inline">
+                <span className="field-label">Add tag</span>
+                <select
+                  className="input input-compact"
+                  value={addId}
+                  onChange={(ev) => setAddId(ev.target.value)}
+                  disabled={busy || allTagsQuery.isPending}
+                  aria-label={`Add tag to ${quoteTitle}`}
+                >
+                  <option value="">
+                    {allTagsQuery.isPending
+                      ? "Loading tags…"
+                      : selectable.length === 0
+                        ? "No more tags to add"
+                        : "Select a tag…"}
+                  </option>
+                  {selectable.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button
+                type="button"
+                className="btn btn-small"
+                disabled={
+                  busy || allTagsQuery.isPending || !isAddIdSelectable
+                }
+                onClick={() => {
+                  if (isAddIdSelectable) {
+                    addMutation.mutate(addId);
+                  }
+                }}
+              >
+                {addMutation.isPending ? "Adding…" : "Add"}
+              </button>
+              {allTagsQuery.data?.truncated ? (
+                <span className="muted fetch-hint">
+                  Showing first {allTagsQuery.data.items.length} of{" "}
+                  {allTagsQuery.data.total} tags.
+                </span>
+              ) : null}
+              {allTagsQuery.isError ? (
+                <span className="error fetch-hint" role="alert">
+                  Tag list failed to load.
+                </span>
+              ) : null}
+            </div>
+          ) : null}
+
+          {localError ? <p className="error">{localError}</p> : null}
+        </div>
+      </td>
+    </tr>
+  );
 }

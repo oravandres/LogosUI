@@ -81,6 +81,18 @@ export type QuoteWriteBody = {
   category_id: string | null;
 };
 
+/** Matches Logos `model.TagResponse`. */
+export type Tag = {
+  id: string;
+  name: string;
+  created_at: string;
+};
+
+/** Matches Logos `model.CreateTagRequest`. */
+export type TagWriteBody = {
+  name: string;
+};
+
 /** GET /api/v1/health success body. */
 export type HealthOk = { status: "healthy" };
 

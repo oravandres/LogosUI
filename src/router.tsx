@@ -5,6 +5,7 @@ import { CategoriesPage } from "@/pages/CategoriesPage";
 import { HomePage } from "@/pages/HomePage";
 import { ImagesPage } from "@/pages/ImagesPage";
 import { QuotesPage } from "@/pages/QuotesPage";
+import { TagsPage } from "@/pages/TagsPage";
 
 export const router = createBrowserRouter([
   {
@@ -16,6 +17,7 @@ export const router = createBrowserRouter([
       { path: "images", element: <ImagesPage /> },
       { path: "authors", element: <AuthorsPage /> },
       { path: "quotes", element: <QuotesPage /> },
+      { path: "tags", element: <TagsPage /> },
     ],
   },
 ]);
