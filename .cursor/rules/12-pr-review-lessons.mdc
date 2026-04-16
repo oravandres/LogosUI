@@ -39,6 +39,19 @@ Patterns that caused real PR review rounds on LogosUI. Follow these to get PRs r
   - Commit on click via **`onMouseDown` with `preventDefault`** so the click does not first blur the input and get swallowed by the listbox unmounting.
   - If you cannot afford this full keyboard contract, use a **native `<select>`** (search by typing and arrow navigation come for free) rather than shipping a mouse-only combobox.
 
+## Async editors against sub-resources (parent + children)
+
+These rules cover panels that read and mutate a child collection scoped to a parent (e.g. `/quotes/{id}/tags`, `/authors/{id}/books`). They surfaced repeatedly while wiring the per-quote tag editor.
+
+- **Distinguish parent-missing (404) from child-invalid (422) from transient read failures.** Surface each as a distinct, stable UI state — not a single generic "something went wrong" banner. Backends like Logos already give the distinction; do not throw it away.
+- **Parent-missing must collapse the editor into a read-only state, not just print a message.** A 404 from the parent's read query (`GET /quotes/{id}/tags`) **and** a 404 from any child mutation (`POST /quotes/{id}/tags`) must both put the panel into the same parent-missing state. Track with a **sticky local flag** OR'd into the derived `parentMissing`:
+  - The mutation 404 path cannot rely on the read query alone, because the read query may still hold a stale success result from before the parent was deleted. There is a real window where the chip list, empty state, and add UI would otherwise stay rendered against a dead parent.
+  - On the mutation 404 also `invalidateQueries(["children", parentId])` so any other view of the same parent (e.g. a chip cell on the list row) flips to "gone" without a manual refresh.
+  - When entering parent-missing state, clear the child-mutation `localError` so users do not see two banners saying the same thing.
+- **Gate empty-state, the chip/list view, and write controls on `query.isSuccess && !parentMissing`** — never on "absence of a specific known error". A non-404 read failure (transient 500, network blip) must not fall through to `data ?? []`, otherwise the panel renders the error **and** "No items yet." **and** the add picker simultaneously, and the user edits blind: existing associations are hidden and the "addable" set may include children that are actually already attached.
+- **Child-invalid (422) on add must reset the submitted id and disable Add until the value is still in the refreshed option set.** A controlled `<select>` whose value disappears from the new options falls back to the placeholder visually, but state still holds the dead id; a button gated only on `value !== ""` will happily resubmit it. Reset the id explicitly **and** derive `disabled` from `selectable.some(t => t.id === currentValue)` as defense in depth, then `invalidateQueries(["children-catalog"])` so the dropdown repopulates.
+- **Cover both the happy path and the four bad paths in tests:** add success, remove success, parent-404 from read, parent-404 from write, child-422 on write, plus a non-404 read failure that must not collapse into an empty/blind state. These are the regressions reviewers actually catch.
+
 ## Vite and environment files
 
 - Require critical public env vars (e.g. **`VITE_*` API base URL**) at **`vite build`** time when production bundles must not ship without them (fail in `vite.config.ts` / `loadEnv`, not only on first browser request).
