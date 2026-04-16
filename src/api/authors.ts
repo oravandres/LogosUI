@@ -1,4 +1,4 @@
-import { fetchJson, postJson } from "@/api/client";
+import { fetchJson, postJson, putJson } from "@/api/client";
 import type { Author, AuthorWriteBody, PaginatedResponse } from "@/api/types";
 
 const API_PREFIX = "/api/v1/authors";
@@ -38,6 +38,22 @@ export function listAuthors(
 
 export function createAuthor(body: AuthorWriteBody): Promise<Author> {
   return postJson<Author>(API_PREFIX, body);
+}
+
+export function getAuthor(
+  id: string,
+  signal?: AbortSignal
+): Promise<Author> {
+  return fetchJson<Author>(`${API_PREFIX}/${encodeURIComponent(id)}`, {
+    signal,
+  });
+}
+
+export function updateAuthor(
+  id: string,
+  body: AuthorWriteBody
+): Promise<Author> {
+  return putJson<Author>(`${API_PREFIX}/${encodeURIComponent(id)}`, body);
 }
 
 export function deleteAuthor(id: string): Promise<void> {

@@ -366,3 +366,61 @@ code.wrap {
   display: flex;
   gap: 0.5rem;
 }
+
+/* ── Inline edit ── */
+
+.btn-group {
+  display: inline-flex;
+  gap: 0.35rem;
+}
+
+.btn-success {
+  background: #dcfce7;
+  border-color: #86efac;
+  color: #166534;
+}
+
+.btn-success:hover:not(:disabled) {
+  background: #bbf7d0;
+}
+
+.edit-input {
+  padding: 0.3rem 0.45rem;
+  font: inherit;
+  font-size: 0.875rem;
+  border: 1px solid #94a3b8;
+  border-radius: 4px;
+  background: #fff;
+  color: #0f172a;
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+}
+
+.edit-input:focus {
+  outline: 2px solid #38bdf8;
+  outline-offset: 1px;
+}
+
+.edit-select {
+  padding: 0.3rem 0.35rem;
+  font: inherit;
+  font-size: 0.875rem;
+  border: 1px solid #94a3b8;
+  border-radius: 4px;
+  background: #fff;
+  color: #0f172a;
+}
+
+.edit-textarea {
+  resize: vertical;
+  min-height: 2.5rem;
+}
+
+.data-table .editing td {
+  background: #f0f9ff;
+  vertical-align: top;
+  padding-top: 0.45rem;
+  padding-bottom: 0.45rem;
+}
+

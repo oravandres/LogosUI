@@ -13,6 +13,7 @@ import {
   deleteImage,
   IMAGES_PAGE_SIZE,
   listImages,
+  updateImage,
 } from "@/api/images";
 import type { ImageWriteBody } from "@/api/types";
 import { safeHttpHref } from "@/url/safeHttpUrl";
@@ -22,6 +23,11 @@ type DeleteImageVars = {
   onlyRowOnPage: boolean;
   pageOffset: number;
   categoryFilterId: string;
+};
+
+type UpdateImageVars = {
+  id: string;
+  body: ImageWriteBody;
 };
 
 export function ImagesPage() {
@@ -66,6 +72,18 @@ export function ImagesPage() {
     },
   });
 
+  const updateMutation = useMutation({
+    mutationFn: ({ id, body }: UpdateImageVars) => updateImage(id, body),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["images"] });
+      setEditingId(null);
+      setEditError(null);
+    },
+    onError: (err) => {
+      setEditError(err instanceof ApiError ? err.message : String(err));
+    },
+  });
+
   const deleteMutation = useMutation({
     mutationFn: ({ id }: DeleteImageVars) => deleteImage(id),
     onSuccess: async (_data, vars) => {
@@ -87,6 +105,48 @@ export function ImagesPage() {
   const [formAlt, setFormAlt] = useState("");
   const [formCategoryId, setFormCategoryId] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
+
+  // Inline edit state
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editUrl, setEditUrl] = useState("");
+  const [editAlt, setEditAlt] = useState("");
+  const [editCategoryId, setEditCategoryId] = useState("");
+  const [editError, setEditError] = useState<string | null>(null);
+
+  const startEditing = (
+    id: string,
+    url: string,
+    altText: string | null,
+    catId: string | null
+  ) => {
+    setEditingId(id);
+    setEditUrl(url);
+    setEditAlt(altText ?? "");
+    setEditCategoryId(catId ?? "");
+    setEditError(null);
+  };
+
+  const cancelEditing = () => {
+    setEditingId(null);
+    setEditError(null);
+  };
+
+  const submitEdit = () => {
+    if (!editingId) return;
+    const url = editUrl.trim();
+    if (!url) {
+      setEditError("URL is required.");
+      return;
+    }
+    const altTrim = editAlt.trim();
+    const body: ImageWriteBody = {
+      url,
+      alt_text: altTrim === "" ? null : altTrim,
+      category_id: editCategoryId === "" ? null : editCategoryId,
+    };
+    setEditError(null);
+    updateMutation.mutate({ id: editingId, body });
+  };
 
   const page = listQuery.data;
   const rangeStart = page ? page.offset + 1 : 0;
@@ -126,6 +186,8 @@ export function ImagesPage() {
     if (!err) return null;
     return err instanceof ApiError ? err.message : String(err);
   }, [deleteMutation.error]);
+
+  const isMutating = updateMutation.isPending || deleteMutation.isPending;
 
   return (
     <section className="page">
@@ -266,6 +328,83 @@ export function ImagesPage() {
                 </thead>
                 <tbody>
                   {page.items.map((img) => {
+                    const rowAriaName = `${truncateUrl(img.url, 40)} (${img.id})`;
+                    if (editingId === img.id) {
+                      return (
+                        <tr key={img.id} className="editing">
+                          <td>
+                            <input
+                              className="edit-input"
+                              value={editUrl}
+                              onChange={(ev) => setEditUrl(ev.target.value)}
+                              maxLength={2048}
+                              autoComplete="off"
+                              disabled={updateMutation.isPending}
+                              autoFocus
+                              aria-label={`URL — ${rowAriaName}`}
+                            />
+                          </td>
+                          <td>
+                            <input
+                              className="edit-input"
+                              value={editAlt}
+                              onChange={(ev) => setEditAlt(ev.target.value)}
+                              maxLength={500}
+                              autoComplete="off"
+                              disabled={updateMutation.isPending}
+                              aria-label={`Alt text — ${rowAriaName}`}
+                            />
+                          </td>
+                          <td>
+                            <select
+                              className="edit-select"
+                              value={editCategoryId}
+                              onChange={(ev) =>
+                                setEditCategoryId(ev.target.value)
+                              }
+                              disabled={
+                                updateMutation.isPending ||
+                                imageCategoriesQuery.isPending
+                              }
+                              aria-label={`Category — ${rowAriaName}`}
+                            >
+                              <option value="">None</option>
+                              {imageCategoryOptions.map((c) => (
+                                <option key={c.id} value={c.id}>
+                                  {c.name}
+                                </option>
+                              ))}
+                            </select>
+                          </td>
+                          <td className="muted nowrap">
+                            {formatDate(img.updated_at)}
+                          </td>
+                          <td className="actions">
+                            <div className="btn-group">
+                              <button
+                                type="button"
+                                className="btn btn-success btn-small"
+                                disabled={updateMutation.isPending}
+                                onClick={submitEdit}
+                                aria-label={`Save changes for image ${rowAriaName}`}
+                              >
+                                {updateMutation.isPending ? "Saving…" : "Save"}
+                              </button>
+                              <button
+                                type="button"
+                                className="btn btn-small"
+                                disabled={updateMutation.isPending}
+                                onClick={cancelEditing}
+                                aria-label={`Cancel editing image ${rowAriaName}`}
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    }
+
                     const linkHref = safeHttpHref(img.url);
                     const displayUrl = truncateUrl(img.url, 48);
                     return (
@@ -300,28 +439,45 @@ export function ImagesPage() {
                         {formatDate(img.updated_at)}
                       </td>
                       <td className="actions">
-                        <button
-                          type="button"
-                          className="btn btn-danger btn-small"
-                          disabled={deleteMutation.isPending}
-                          aria-label={`Delete image ${truncateUrl(img.url, 40)}`}
-                          onClick={() => {
-                            if (
-                              window.confirm(
-                                `Delete this image?\n${img.url}`
+                        <div className="btn-group">
+                          <button
+                            type="button"
+                            className="btn btn-small"
+                            disabled={isMutating}
+                            onClick={() =>
+                              startEditing(
+                                img.id,
+                                img.url,
+                                img.alt_text,
+                                img.category_id
                               )
-                            ) {
-                              deleteMutation.mutate({
-                                id: img.id,
-                                onlyRowOnPage: page.items.length === 1,
-                                pageOffset: offset,
-                                categoryFilterId,
-                              });
                             }
-                          }}
-                        >
-                          Delete
-                        </button>
+                          >
+                            Edit
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-danger btn-small"
+                            disabled={isMutating}
+                            aria-label={`Delete image ${truncateUrl(img.url, 40)}`}
+                            onClick={() => {
+                              if (
+                                window.confirm(
+                                  `Delete this image?\n${img.url}`
+                                )
+                              ) {
+                                deleteMutation.mutate({
+                                  id: img.id,
+                                  onlyRowOnPage: page.items.length === 1,
+                                  pageOffset: offset,
+                                  categoryFilterId,
+                                });
+                              }
+                            }}
+                          >
+                            Delete
+                          </button>
+                        </div>
                       </td>
                     </tr>
                     );
@@ -358,6 +514,7 @@ export function ImagesPage() {
             </div>
           </>
         ) : null}
+        {editError ? <p className="error">{editError}</p> : null}
         {deleteError ? <p className="error">{deleteError}</p> : null}
       </div>
     </section>

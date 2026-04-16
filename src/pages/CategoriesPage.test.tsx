@@ -1,0 +1,123 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ApiError } from "@/api/client";
+import { CategoriesPage } from "./CategoriesPage";
+
+const listCategoriesMock = vi.fn();
+const updateCategoryMock = vi.fn();
+const createCategoryMock = vi.fn();
+const deleteCategoryMock = vi.fn();
+
+vi.mock("@/api/categories", () => ({
+  CATEGORIES_PAGE_SIZE: 20,
+  listCategories: (...args: unknown[]) => listCategoriesMock(...args),
+  createCategory: (...args: unknown[]) => createCategoryMock(...args),
+  updateCategory: (...args: unknown[]) => updateCategoryMock(...args),
+  deleteCategory: (...args: unknown[]) => deleteCategoryMock(...args),
+}));
+
+function renderPage() {
+  const client = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false },
+      mutations: { retry: false },
+    },
+  });
+  return render(
+    <QueryClientProvider client={client}>
+      <CategoriesPage />
+    </QueryClientProvider>
+  );
+}
+
+function sampleList() {
+  return {
+    items: [
+      {
+        id: "cat-1",
+        name: "Alpha",
+        type: "quote",
+        created_at: "2020-01-01T00:00:00.000Z",
+      },
+    ],
+    total: 1,
+    offset: 0,
+    limit: 20,
+  };
+}
+
+describe("CategoriesPage inline edit", () => {
+  beforeEach(() => {
+    listCategoriesMock.mockResolvedValue(sampleList());
+    createCategoryMock.mockResolvedValue({
+      id: "new",
+      name: "x",
+      type: "quote",
+      created_at: "2020-01-01T00:00:00.000Z",
+    });
+    deleteCategoryMock.mockResolvedValue(undefined);
+    updateCategoryMock.mockResolvedValue({
+      id: "cat-1",
+      name: "Beta",
+      type: "quote",
+      created_at: "2020-01-01T00:00:00.000Z",
+    });
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("shows client-side validation when name is empty on save", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText("Alpha");
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+    const nameField = screen.getByRole("textbox", { name: /name — alpha/i });
+    await user.clear(nameField);
+    await user.click(
+      screen.getByRole("button", { name: /save changes for category alpha/i })
+    );
+    expect(screen.getByText("Name is required.")).toBeInTheDocument();
+    expect(updateCategoryMock).not.toHaveBeenCalled();
+  });
+
+  it("submits update on save success", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText("Alpha");
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+    const nameField = screen.getByRole("textbox", { name: /name — alpha/i });
+    await user.clear(nameField);
+    await user.type(nameField, "Beta");
+    await user.click(
+      screen.getByRole("button", { name: /save changes for category alpha/i })
+    );
+    await waitFor(() =>
+      expect(updateCategoryMock).toHaveBeenCalledWith("cat-1", {
+        name: "Beta",
+        type: "quote",
+      })
+    );
+  });
+
+  it("surfaces server errors from update", async () => {
+    updateCategoryMock.mockRejectedValueOnce(
+      new ApiError("Category is locked", 500, {})
+    );
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText("Alpha");
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+    const nameField = screen.getByRole("textbox", { name: /name — alpha/i });
+    await user.clear(nameField);
+    await user.type(nameField, "Beta");
+    await user.click(
+      screen.getByRole("button", { name: /save changes for category alpha/i })
+    );
+    await screen.findByText("Category is locked");
+    expect(updateCategoryMock).toHaveBeenCalled();
+  });
+});

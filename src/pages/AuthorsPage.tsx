@@ -4,7 +4,13 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+} from "react";
 import { flushSync } from "react-dom";
 import { ApiError } from "@/api/client";
 import {
@@ -12,9 +18,10 @@ import {
   createAuthor,
   deleteAuthor,
   listAuthors,
+  updateAuthor,
 } from "@/api/authors";
 import { listAllCategoriesByType } from "@/api/categories";
-import { listImages } from "@/api/images";
+import { getImage, listImages } from "@/api/images";
 import type { AuthorWriteBody } from "@/api/types";
 
 const SEARCH_DEBOUNCE_MS = 400;
@@ -28,6 +35,11 @@ type DeleteAuthorVars = {
   pageOffset: number;
   categoryFilterId: string;
   nameSearch: string;
+};
+
+type UpdateAuthorVars = {
+  id: string;
+  body: AuthorWriteBody;
 };
 
 export function AuthorsPage() {
@@ -82,7 +94,10 @@ export function AuthorsPage() {
   });
 
   const authorCategoryOptions = authorCategoriesQuery.data ?? [];
-  const imageOptions = imagesPickerQuery.data?.items ?? [];
+  const imageOptions = useMemo(
+    () => imagesPickerQuery.data?.items ?? [],
+    [imagesPickerQuery.data]
+  );
 
   const listQuery = useQuery({
     queryKey: [
@@ -117,6 +132,18 @@ export function AuthorsPage() {
     },
   });
 
+  const updateMutation = useMutation({
+    mutationFn: ({ id, body }: UpdateAuthorVars) => updateAuthor(id, body),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["authors"] });
+      setEditingId(null);
+      setEditError(null);
+    },
+    onError: (err) => {
+      setEditError(err instanceof ApiError ? err.message : String(err));
+    },
+  });
+
   const deleteMutation = useMutation({
     mutationFn: ({ id }: DeleteAuthorVars) => deleteAuthor(id),
     onSuccess: async (_data, vars) => {
@@ -142,6 +169,88 @@ export function AuthorsPage() {
   const [formImageId, setFormImageId] = useState("");
   const [formCategoryId, setFormCategoryId] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
+
+  // Inline edit state
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editBio, setEditBio] = useState("");
+  const [editBorn, setEditBorn] = useState("");
+  const [editDied, setEditDied] = useState("");
+  const [editImageId, setEditImageId] = useState("");
+  const [editCategoryId, setEditCategoryId] = useState("");
+  const [editError, setEditError] = useState<string | null>(null);
+
+  const portraitMissingId = useMemo(() => {
+    if (!editingId || editImageId === "") return null;
+    if (imageOptions.some((img) => img.id === editImageId)) return null;
+    return editImageId;
+  }, [editingId, editImageId, imageOptions]);
+
+  const portraitFallbackQuery = useQuery({
+    queryKey: ["images", "edit-portrait-fallback", portraitMissingId],
+    queryFn: ({ signal }) => getImage(portraitMissingId!, signal),
+    enabled: portraitMissingId !== null,
+    staleTime: 60_000,
+  });
+
+  const portraitSelectOptions = useMemo(() => {
+    const items = [...imageOptions];
+    const extra = portraitFallbackQuery.data;
+    if (extra && !items.some((i) => i.id === extra.id)) {
+      items.unshift(extra);
+    }
+    return items;
+  }, [imageOptions, portraitFallbackQuery.data]);
+
+  const startEditing = (a: {
+    id: string;
+    name: string;
+    bio: string | null;
+    born_date: string | null;
+    died_date: string | null;
+    image_id: string | null;
+    category_id: string | null;
+  }) => {
+    setEditingId(a.id);
+    setEditName(a.name);
+    setEditBio(a.bio ?? "");
+    setEditBorn(a.born_date ?? "");
+    setEditDied(a.died_date ?? "");
+    setEditImageId(a.image_id ?? "");
+    setEditCategoryId(a.category_id ?? "");
+    setEditError(null);
+    // Arm the portrait picker so options are available for the edit row
+    setPortraitPickerArmed(true);
+  };
+
+  const cancelEditing = () => {
+    setEditingId(null);
+    setEditError(null);
+  };
+
+  const submitEdit = () => {
+    if (!editingId) return;
+    const name = editName.trim();
+    if (!name) {
+      setEditError("Name is required.");
+      return;
+    }
+    if (editBorn && editDied && editDied < editBorn) {
+      setEditError("Died date must not be earlier than born date.");
+      return;
+    }
+    const bioTrim = editBio.trim();
+    const body: AuthorWriteBody = {
+      name,
+      bio: bioTrim === "" ? null : bioTrim,
+      born_date: editBorn === "" ? null : editBorn,
+      died_date: editDied === "" ? null : editDied,
+      image_id: editImageId === "" ? null : editImageId,
+      category_id: editCategoryId === "" ? null : editCategoryId,
+    };
+    setEditError(null);
+    updateMutation.mutate({ id: editingId, body });
+  };
 
   const page = listQuery.data;
   const rangeStart = page ? page.offset + 1 : 0;
@@ -192,6 +301,8 @@ export function AuthorsPage() {
   const authorPickerLoading = authorCategoriesQuery.isPending;
   const portraitPickerLoading =
     portraitPickerArmed && imagesPickerQuery.isPending;
+
+  const isMutating = updateMutation.isPending || deleteMutation.isPending;
 
   return (
     <section className="page">
@@ -386,58 +497,183 @@ export function AuthorsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {page.items.map((a) => (
-                    <tr key={a.id}>
-                      <td className="nowrap-strong">{a.name}</td>
-                      <td className="muted bio-cell" title={a.bio ?? undefined}>
-                        {a.bio ? truncateMiddle(a.bio, 36) : "—"}
-                      </td>
-                      <td className="muted nowrap">{a.born_date ?? "—"}</td>
-                      <td className="muted nowrap">{a.died_date ?? "—"}</td>
-                      <td className="muted nowrap">
-                        {a.category_id ? (
-                          <code className="id-chip">{a.category_id}</code>
-                        ) : (
-                          "—"
-                        )}
-                      </td>
-                      <td className="muted nowrap">
-                        {a.image_id ? (
-                          <code className="id-chip">{a.image_id}</code>
-                        ) : (
-                          "—"
-                        )}
-                      </td>
-                      <td className="muted nowrap">
-                        {formatDate(a.updated_at)}
-                      </td>
-                      <td className="actions">
-                        <button
-                          type="button"
-                          className="btn btn-danger btn-small"
-                          disabled={deleteMutation.isPending}
-                          aria-label={`Delete author ${a.name}`}
-                          onClick={() => {
-                            if (
-                              window.confirm(
-                                `Delete author “${a.name}”? This fails if they have quotes.`
-                              )
-                            ) {
-                              deleteMutation.mutate({
-                                id: a.id,
-                                onlyRowOnPage: page.items.length === 1,
-                                pageOffset: offset,
-                                categoryFilterId,
-                                nameSearch: appliedSearch,
-                              });
+                  {page.items.map((a) =>
+                    editingId === a.id ? (
+                      <tr key={a.id} className="editing">
+                        <td>
+                          <input
+                            className="edit-input"
+                            value={editName}
+                            onChange={(ev) => setEditName(ev.target.value)}
+                            maxLength={255}
+                            autoComplete="off"
+                            disabled={updateMutation.isPending}
+                            autoFocus
+                            aria-label={`Name — ${a.name}`}
+                          />
+                        </td>
+                        <td>
+                          <textarea
+                            className="edit-input edit-textarea"
+                            value={editBio}
+                            onChange={(ev) => setEditBio(ev.target.value)}
+                            rows={2}
+                            disabled={updateMutation.isPending}
+                            aria-label={`Bio — ${a.name}`}
+                          />
+                        </td>
+                        <td>
+                          <input
+                            className="edit-input"
+                            type="date"
+                            value={editBorn}
+                            onChange={(ev) => setEditBorn(ev.target.value)}
+                            disabled={updateMutation.isPending}
+                            aria-label={`Born — ${a.name}`}
+                          />
+                        </td>
+                        <td>
+                          <input
+                            className="edit-input"
+                            type="date"
+                            value={editDied}
+                            onChange={(ev) => setEditDied(ev.target.value)}
+                            disabled={updateMutation.isPending}
+                            aria-label={`Died — ${a.name}`}
+                          />
+                        </td>
+                        <td>
+                          <select
+                            className="edit-select"
+                            value={editCategoryId}
+                            onChange={(ev) =>
+                              setEditCategoryId(ev.target.value)
                             }
-                          }}
-                        >
-                          Delete
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
+                            disabled={
+                              updateMutation.isPending || authorPickerLoading
+                            }
+                            aria-label={`Category — ${a.name}`}
+                          >
+                            <option value="">None</option>
+                            {authorCategoryOptions.map((c) => (
+                              <option key={c.id} value={c.id}>
+                                {c.name}
+                              </option>
+                            ))}
+                          </select>
+                        </td>
+                        <td>
+                          <select
+                            className="edit-select"
+                            value={editImageId}
+                            onChange={(ev) =>
+                              setEditImageId(ev.target.value)
+                            }
+                            disabled={
+                              updateMutation.isPending ||
+                              portraitPickerLoading ||
+                              (portraitMissingId !== null &&
+                                portraitFallbackQuery.isPending)
+                            }
+                            aria-label={`Portrait image — ${a.name}`}
+                          >
+                            <option value="">None</option>
+                            {portraitSelectOptions.map((img) => (
+                              <option key={img.id} value={img.id}>
+                                {truncateMiddle(img.url, 40)}
+                              </option>
+                            ))}
+                          </select>
+                        </td>
+                        <td className="muted nowrap">
+                          {formatDate(a.updated_at)}
+                        </td>
+                        <td className="actions">
+                          <div className="btn-group">
+                            <button
+                              type="button"
+                              className="btn btn-success btn-small"
+                              disabled={updateMutation.isPending}
+                              onClick={submitEdit}
+                              aria-label={`Save changes for author ${a.name}`}
+                            >
+                              {updateMutation.isPending ? "Saving…" : "Save"}
+                            </button>
+                            <button
+                              type="button"
+                              className="btn btn-small"
+                              disabled={updateMutation.isPending}
+                              onClick={cancelEditing}
+                              aria-label={`Cancel editing author ${a.name}`}
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ) : (
+                      <tr key={a.id}>
+                        <td className="nowrap-strong">{a.name}</td>
+                        <td className="muted bio-cell" title={a.bio ?? undefined}>
+                          {a.bio ? truncateMiddle(a.bio, 36) : "—"}
+                        </td>
+                        <td className="muted nowrap">{a.born_date ?? "—"}</td>
+                        <td className="muted nowrap">{a.died_date ?? "—"}</td>
+                        <td className="muted nowrap">
+                          {a.category_id ? (
+                            <code className="id-chip">{a.category_id}</code>
+                          ) : (
+                            "—"
+                          )}
+                        </td>
+                        <td className="muted nowrap">
+                          {a.image_id ? (
+                            <code className="id-chip">{a.image_id}</code>
+                          ) : (
+                            "—"
+                          )}
+                        </td>
+                        <td className="muted nowrap">
+                          {formatDate(a.updated_at)}
+                        </td>
+                        <td className="actions">
+                          <div className="btn-group">
+                            <button
+                              type="button"
+                              className="btn btn-small"
+                              disabled={isMutating}
+                              onClick={() => startEditing(a)}
+                            >
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              className="btn btn-danger btn-small"
+                              disabled={isMutating}
+                              aria-label={`Delete author ${a.name}`}
+                              onClick={() => {
+                                if (
+                                  window.confirm(
+                                    `Delete author "${a.name}"? This fails if they have quotes.`
+                                  )
+                                ) {
+                                  deleteMutation.mutate({
+                                    id: a.id,
+                                    onlyRowOnPage: page.items.length === 1,
+                                    pageOffset: offset,
+                                    categoryFilterId,
+                                    nameSearch: appliedSearch,
+                                  });
+                                }
+                              }}
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  )}
                 </tbody>
               </table>
             </div>
@@ -470,6 +706,7 @@ export function AuthorsPage() {
             </div>
           </>
         ) : null}
+        {editError ? <p className="error">{editError}</p> : null}
         {deleteError ? <p className="error">{deleteError}</p> : null}
       </div>
     </section>
