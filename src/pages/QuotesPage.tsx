@@ -13,6 +13,7 @@ import {
   type ReactNode,
 } from "react";
 import { flushSync } from "react-dom";
+import { Link } from "react-router";
 import { ApiError } from "@/api/client";
 import { listAllCategoriesByType } from "@/api/categories";
 import { getImage, listImages } from "@/api/images";
@@ -660,7 +661,12 @@ export function QuotesPage() {
                     ) : (
                       <tr key={q.id}>
                         <td className="nowrap-strong" title={q.title}>
-                          {truncateMiddle(q.title, 28)}
+                          <Link
+                            to={`/quotes/${q.id}`}
+                            className="row-title-link"
+                          >
+                            {truncateMiddle(q.title, 28)}
+                          </Link>
                         </td>
                         <td className="muted quote-text-cell" title={q.text}>
                           {truncateMiddle(q.text, 40)}

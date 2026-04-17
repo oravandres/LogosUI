@@ -676,3 +676,171 @@ code.wrap {
   font-size: 0.8125rem;
 }
 
+/* ── Quote detail page ── */
+
+.row-title-link {
+  color: inherit;
+  text-decoration: none;
+}
+
+.row-title-link:hover,
+.row-title-link:focus-visible {
+  text-decoration: underline;
+}
+
+.breadcrumb {
+  margin: 0 0 0.5rem;
+}
+
+.breadcrumb a {
+  color: #075985;
+  text-decoration: none;
+}
+
+.breadcrumb a:hover,
+.breadcrumb a:focus-visible {
+  text-decoration: underline;
+}
+
+.quote-detail-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 0.75rem;
+}
+
+.quote-detail-header h2 {
+  margin: 0;
+}
+
+.quote-body {
+  background: #fff;
+  border-left: 4px solid #38bdf8;
+}
+
+.quote-text {
+  margin: 0;
+  font-size: 1.0625rem;
+  line-height: 1.55;
+  color: #0f172a;
+  white-space: pre-wrap;
+}
+
+.author-block {
+  display: grid;
+  grid-template-columns: 5rem 1fr;
+  gap: 1rem;
+  align-items: start;
+}
+
+.author-portrait {
+  width: 5rem;
+  height: 5rem;
+}
+
+.author-portrait-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 999px;
+  border: 1px solid #e2e8f0;
+  background: #f1f5f9;
+}
+
+.author-portrait-fallback {
+  width: 100%;
+  height: 100%;
+  border-radius: 999px;
+  background: #e0f2fe;
+  color: #075985;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  font-size: 1.25rem;
+  border: 1px solid #bae6fd;
+}
+
+.author-portrait-loading {
+  background: #f1f5f9;
+  border-color: #e2e8f0;
+  color: transparent;
+}
+
+.author-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.author-name {
+  margin: 0;
+  font-weight: 600;
+  font-size: 1.0625rem;
+}
+
+.author-bio {
+  margin: 0;
+  color: #334155;
+  line-height: 1.5;
+}
+
+.author-dates {
+  margin: 0;
+  font-size: 0.875rem;
+}
+
+.quote-image {
+  margin: 0;
+}
+
+.quote-image-img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+}
+
+.quote-image figcaption {
+  margin-top: 0.5rem;
+  font-size: 0.875rem;
+}
+
+.meta-list {
+  margin: 0;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.meta-row {
+  display: grid;
+  grid-template-columns: 7rem 1fr;
+  gap: 0.75rem;
+  align-items: baseline;
+}
+
+.meta-row dt {
+  font-weight: 600;
+  color: #475569;
+  font-size: 0.875rem;
+}
+
+.meta-row dd {
+  margin: 0;
+}
+
+@media (max-width: 480px) {
+  .author-block {
+    grid-template-columns: 1fr;
+  }
+  .author-portrait {
+    width: 4rem;
+    height: 4rem;
+  }
+  .meta-row {
+    grid-template-columns: 1fr;
+  }
+}

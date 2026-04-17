@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/api/client";
 import { QuotesPage } from "./QuotesPage";
@@ -58,7 +59,9 @@ function renderPage() {
   });
   return render(
     <QueryClientProvider client={client}>
-      <QuotesPage />
+      <MemoryRouter>
+        <QuotesPage />
+      </MemoryRouter>
     </QueryClientProvider>
   );
 }
@@ -133,6 +136,12 @@ describe("QuotesPage", () => {
   it("renders the quote from the list", async () => {
     renderPage();
     expect(await screen.findByText("On Virtue")).toBeInTheDocument();
+  });
+
+  it("links each row title to the matching quote detail page", async () => {
+    renderPage();
+    const link = await screen.findByRole("link", { name: /On Virtue/i });
+    expect(link).toHaveAttribute("href", "/quotes/quote-1");
   });
 
   describe("create form", () => {

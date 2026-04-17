@@ -18,16 +18,14 @@ This document tracks what is done, what is next, and how we get the UI deployed 
 | `AuthorPicker` | Debounced async combobox, full ARIA keyboard contract (arrow/Home/End/Enter/Escape), display-name resolution |
 | Per-quote tags | Chip display + inline editor with parent-404 / child-422 / read-error handling |
 | Home dashboard | Corpus counts + recent quotes with resolved author names |
-| Tests | Vitest + RTL, 39 tests across 6 suites (all passing at time of writing) |
+| Tests | Vitest + RTL, 77 tests across 9 suites (all passing at time of writing) |
 | Lint / typecheck | ESLint, `tsc --noEmit` clean |
 | Cursor rules | Picker reachability, combobox a11y, sub-resource editor lessons captured in `.cursor/rules/` |
 
 What is **not** shipped:
 
 - No production deployment — no Dockerfile, no CI, no cluster manifests.
-- No route for a single quote detail view (all navigation lands on the list pages).
 - No global search, no dark mode, no skeleton loaders.
-- `AuthorPicker` keyboard contract is still inlined; it should be a shared primitive once a second picker needs it.
 
 ---
 
@@ -56,15 +54,22 @@ Lifted the keyboard contract previously inlined in `AuthorPicker` into a shared 
 - `AuthorPicker` is now a thin search/resolve adapter on top of the primitive — public API unchanged.
 - Direct unit tests for the primitive in `Combobox.test.tsx` cover ARIA wiring, keyboard navigation, mouse commit, hover sync, custom rendering, and slot composition.
 
-### Phase B — Quote detail view _(medium)_
+### ~~Phase B — Quote detail view~~ _(shipped)_
 
-A dedicated read-oriented page at `/quotes/:id` rendering:
+Dedicated read-oriented page at `/quotes/:id` rendering:
 
-- Title, full text, author (with bio snippet + portrait from `image_id`), image if present, category chip, tag chips.
-- Edit / delete actions gated behind a confirm.
-- "Open in list with this author" and "…with this tag" links that navigate to the filtered list pages.
+- Title, full text (paragraphs preserved), author block (name + bio + life span + portrait resolved through `author.image_id`), optional quote image, category chip, read-only tag chips, and created/updated timestamps.
+- **Delete** action gated behind a `window.confirm`, which then invalidates `["quotes"]` / `["home"]`, evicts `["quote", id]` and `["quote-tags", id]`, and navigates back to `/quotes` so a back-button never re-renders the deleted quote from cache.
+- 404 on the quote itself shows a friendly "Quote not found" page; auxiliary lookups (portrait, category, tag list) degrade gracefully without tearing down the page.
+- Cache keys are aligned with the home dashboard (`["author", id]`) and the quotes list (`["quote-tags", id]`) so the same fetch backs every view.
+- Title links: `HomePage` recent-quote titles and the `QuotesPage` row title cell now `<Link>` straight to `/quotes/:id`.
 
-Touches: new route, new page, a small `<QuoteView>` component, and a `Link` from the home "recent quotes" list and from the quotes table to `/quotes/:id`.
+### Phase B.1 — Filtered-list deep links and inline edit on the detail page _(small, deferred)_
+
+Split out of Phase B because each requires plumbing that does not yet exist:
+
+- **"Open list with this author/tag"** links from the detail page need URL-search-param syncing in `QuotesPage` (currently filters live in component state only). `?tag=` also needs a backend filter on `GET /quotes` that the API does not expose today; coordinate with Logos before shipping.
+- **Inline Edit on the detail page** would duplicate the QuotesPage create/edit form. Worth doing once the form is itself extracted into a shared `<QuoteForm>` component; for now the detail page links to `/quotes` for editing.
 
 ### Phase C — Global polish _(medium)_
 
@@ -86,7 +91,7 @@ Touches: new route, new page, a small `<QuoteView>` component, and a `Link` from
 - Keyboard shortcuts for power users (`/` to focus search, `n` to create).
 - Full-text search once the backend exposes it.
 
-**Rough ordering:** A → B → C → D, then E as user feedback dictates. A and B are independently shippable and do not conflict.
+**Rough ordering:** A → B → C → D, then E as user feedback dictates. A and B are independently shippable and do not conflict. B.1 can interleave with C without conflict.
 
 ---
 

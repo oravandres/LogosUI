@@ -155,12 +155,15 @@ describe("HomePage", () => {
   it("renders recent quotes with resolved author names", async () => {
     renderPage();
 
-    expect(
-      await screen.findByRole("link", { name: "On beginnings" })
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("link", { name: "On persistence" })
-    ).toBeInTheDocument();
+    const firstLink = await screen.findByRole("link", {
+      name: "On beginnings",
+    });
+    expect(firstLink).toBeInTheDocument();
+    // Recent-quote titles deep-link straight to the detail page so users
+    // never bounce through the list to reach a single quote.
+    expect(firstLink).toHaveAttribute("href", "/quotes/q-1");
+    const secondLink = screen.getByRole("link", { name: "On persistence" });
+    expect(secondLink).toHaveAttribute("href", "/quotes/q-2");
 
     await waitFor(() => {
       expect(screen.getByText(/by Lao Tzu/)).toBeInTheDocument();
