@@ -16,9 +16,12 @@ import { describe, expect, it } from "vitest";
 //      text, header, skeleton base) — otherwise "dark mode" is just a label
 //      that paints the same surfaces.
 //   4. No component rule carries a literal color value. Every color —
-//      whether hex, rgb/rgba/hsl/hsla/hwb/lab/lch/oklab/oklch/color/
-//      color-mix, or a bare CSS named color — must flow through
-//      `var(--token)`. Only the two palette declarations hold raw values.
+//      whether hex, any rgb/rgba/hsl/hsla/hwb/lab/lch/oklab/oklch/color/
+//      color-mix function, or any of the full CSS Color Module Level 4
+//      named colors (including legacy aliases and `rebeccapurple`) —
+//      must flow through `var(--token)`. The palette-safe keywords
+//      `transparent` and `currentcolor` remain allowed. Only the two
+//      palette declarations hold raw values.
 
 const here = dirname(fileURLToPath(import.meta.url));
 const cssPath = resolve(here, "../index.css");
@@ -170,46 +173,46 @@ describe("index.css palette contract", () => {
     );
     const hexRe = /#[0-9a-fA-F]{3,8}\b/;
 
-    // CSS named colors human authors actually reach for. The full list is
-    // 148 names; we keep a practical subset. Values are scanned as free
-    // tokens so sub-string matches inside `var(--name)` or other
-    // identifiers are not a concern (we check declaration *values*, not
-    // selectors or property names).
+    // Full CSS Color Module Level 4 named-color set (including CSS2 legacy
+    // aliases like `grey`/`gray` and `darkgrey`/`darkgray`). A hand-picked
+    // subset would let oddities like `rebeccapurple` or `aliceblue` slip
+    // through the contract, so this list is exhaustive by design —
+    // maintained as a single static array so adding a new CSS spec name
+    // (the list has not grown since `rebeccapurple` in 2014) is a one-line
+    // change, and `transparent` / `currentcolor` are deliberately omitted
+    // since they are palette-safe keywords callers are allowed to use.
     const namedColors = [
-      "red",
-      "green",
-      "blue",
-      "yellow",
-      "orange",
-      "purple",
-      "pink",
-      "cyan",
-      "magenta",
-      "black",
-      "white",
-      "gray",
-      "grey",
-      "brown",
-      "silver",
-      "gold",
-      "navy",
-      "teal",
-      "maroon",
-      "olive",
-      "lime",
-      "aqua",
-      "fuchsia",
-      "indigo",
-      "violet",
-      "coral",
-      "crimson",
-      "salmon",
-      "turquoise",
-      "khaki",
-      "plum",
-      "orchid",
-      "chocolate",
-      "tomato",
+      "aliceblue", "antiquewhite", "aqua", "aquamarine", "azure",
+      "beige", "bisque", "black", "blanchedalmond", "blue",
+      "blueviolet", "brown", "burlywood", "cadetblue", "chartreuse",
+      "chocolate", "coral", "cornflowerblue", "cornsilk", "crimson",
+      "cyan", "darkblue", "darkcyan", "darkgoldenrod", "darkgray",
+      "darkgreen", "darkgrey", "darkkhaki", "darkmagenta", "darkolivegreen",
+      "darkorange", "darkorchid", "darkred", "darksalmon", "darkseagreen",
+      "darkslateblue", "darkslategray", "darkslategrey", "darkturquoise",
+      "darkviolet", "deeppink", "deepskyblue", "dimgray", "dimgrey",
+      "dodgerblue", "firebrick", "floralwhite", "forestgreen", "fuchsia",
+      "gainsboro", "ghostwhite", "gold", "goldenrod", "gray", "green",
+      "greenyellow", "grey", "honeydew", "hotpink", "indianred", "indigo",
+      "ivory", "khaki", "lavender", "lavenderblush", "lawngreen",
+      "lemonchiffon", "lightblue", "lightcoral", "lightcyan",
+      "lightgoldenrodyellow", "lightgray", "lightgreen", "lightgrey",
+      "lightpink", "lightsalmon", "lightseagreen", "lightskyblue",
+      "lightslategray", "lightslategrey", "lightsteelblue", "lightyellow",
+      "lime", "limegreen", "linen", "magenta", "maroon",
+      "mediumaquamarine", "mediumblue", "mediumorchid", "mediumpurple",
+      "mediumseagreen", "mediumslateblue", "mediumspringgreen",
+      "mediumturquoise", "mediumvioletred", "midnightblue", "mintcream",
+      "mistyrose", "moccasin", "navajowhite", "navy", "oldlace", "olive",
+      "olivedrab", "orange", "orangered", "orchid", "palegoldenrod",
+      "palegreen", "paleturquoise", "palevioletred", "papayawhip",
+      "peachpuff", "peru", "pink", "plum", "powderblue", "purple",
+      "rebeccapurple", "red", "rosybrown", "royalblue", "saddlebrown",
+      "salmon", "sandybrown", "seagreen", "seashell", "sienna", "silver",
+      "skyblue", "slateblue", "slategray", "slategrey", "snow",
+      "springgreen", "steelblue", "tan", "teal", "thistle", "tomato",
+      "turquoise", "violet", "wheat", "white", "whitesmoke", "yellow",
+      "yellowgreen",
     ];
     const namedColorRe = new RegExp(`\\b(${namedColors.join("|")})\\b`, "i");
 
