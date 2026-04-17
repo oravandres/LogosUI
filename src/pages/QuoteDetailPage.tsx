@@ -270,10 +270,14 @@ function AuthorBlock({
         <div className="author-portrait">
           {author?.image_id ? (
             portrait ? (
+              // The author's name is already announced as the adjacent
+              // heading; without distinct alt text the portrait is purely
+              // decorative, so an empty alt avoids screen readers
+              // double-announcing the name.
               <img
                 className="author-portrait-img"
                 src={portrait.url}
-                alt={portrait.alt_text ?? author.name}
+                alt={portrait.alt_text ?? ""}
               />
             ) : portraitErrored ? (
               <div className="author-portrait-fallback" aria-hidden="true">
@@ -388,10 +392,26 @@ function formatLifeSpan(
   return `${b} – ${d}`;
 }
 
+// The API stores `born_date` / `died_date` as ISO 8601 strings that may carry
+// signed BCE years (e.g. `-0383-01-01T00:00:00.000Z`). The JS `Date`
+// constructor only reliably parses the extended `±YYYYYY-MM-DD` form, not the
+// 4-digit `-YYYY-` shape the backend uses, and V8 returns `Invalid Date` for
+// it — which would otherwise leak the raw ISO string into the UI for any
+// pre-modern author. Extract the leading signed year from the string itself
+// so the formatter never depends on locale-sensitive `Date` parsing.
+const YEAR_PREFIX = /^(-?)(\d+)/;
+
 function formatYear(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  return String(d.getUTCFullYear());
+  const m = YEAR_PREFIX.exec(iso);
+  if (!m) return iso;
+  const sign = m[1];
+  const year = Number.parseInt(m[2], 10);
+  if (!Number.isFinite(year)) return iso;
+  // Render negative years as "<n> BC" rather than the raw signed integer.
+  // We deliberately do not adjust for the historical "no year zero"
+  // convention: the API stores astronomical years and the UI surfaces them
+  // faithfully so the displayed value round-trips with the stored value.
+  return sign === "-" ? `${year} BC` : String(year);
 }
 
 function initials(name: string): string {

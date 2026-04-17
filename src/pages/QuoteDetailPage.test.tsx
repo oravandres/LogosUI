@@ -165,7 +165,7 @@ describe("QuoteDetailPage", () => {
     expect(await screen.findByText("Ethics")).toBeInTheDocument();
   });
 
-  it("renders the author portrait when the author has an image_id", async () => {
+  it("renders the author portrait with empty alt when the image carries no alt text", async () => {
     getAuthorMock.mockResolvedValue(author({ image_id: "img-portrait" }));
     getImageMock.mockResolvedValue(
       image({
@@ -175,10 +175,90 @@ describe("QuoteDetailPage", () => {
       })
     );
 
+    const { container } = renderAt("/quotes/q-1");
+
+    await screen.findByText("Aristotle");
+    // The author's name is already in the adjacent heading, so without
+    // distinct alt text the portrait is decorative and must use `alt=""`.
+    // Re-using the author's name here would make screen readers announce
+    // it twice. (`alt=""` makes the img role-presentation, which Testing
+    // Library's role queries hide, so we read it from the DOM directly.)
+    const img = await waitFor(() => {
+      const el = container.querySelector<HTMLImageElement>(
+        ".author-portrait-img"
+      );
+      if (!el) throw new Error("portrait image not yet rendered");
+      return el;
+    });
+    expect(img.getAttribute("src")).toBe("https://example.test/portrait.jpg");
+    expect(img.getAttribute("alt")).toBe("");
+    // And nothing in the page falls back to announcing the author's name as
+    // an image label.
+    expect(screen.queryByAltText("Aristotle")).not.toBeInTheDocument();
+  });
+
+  // Regression: the API stores life dates as signed ISO strings
+  // (`-0383-01-01T00:00:00.000Z`). `new Date(...)` returns `Invalid Date`
+  // for that 4-digit signed-year shape in V8, so an earlier formatter
+  // fell through to the raw ISO string for any pre-modern author. Parse
+  // the year directly from the API string and render BCE years as
+  // "<n> BC".
+  it("renders a BCE lifespan as readable years rather than raw ISO strings", async () => {
+    getAuthorMock.mockResolvedValue(
+      author({
+        born_date: "-0383-01-01T00:00:00.000Z",
+        died_date: "-0321-01-01T00:00:00.000Z",
+      })
+    );
+
     renderAt("/quotes/q-1");
 
-    // alt falls back to the author's name when the image has no alt_text.
-    const img = await screen.findByAltText("Aristotle");
+    expect(await screen.findByText("383 BC – 321 BC")).toBeInTheDocument();
+    // Make sure the raw ISO strings never make it to the page.
+    expect(
+      screen.queryByText(/-0383-01-01T00:00:00\.000Z/)
+    ).not.toBeInTheDocument();
+  });
+
+  it("renders a modern CE lifespan as bare years", async () => {
+    getAuthorMock.mockResolvedValue(
+      author({
+        born_date: "1844-10-15T00:00:00.000Z",
+        died_date: "1900-08-25T00:00:00.000Z",
+      })
+    );
+
+    renderAt("/quotes/q-1");
+
+    expect(await screen.findByText("1844 – 1900")).toBeInTheDocument();
+  });
+
+  it("uses 'present' for a still-living author", async () => {
+    getAuthorMock.mockResolvedValue(
+      author({
+        born_date: "1955-02-24T00:00:00.000Z",
+        died_date: null,
+      })
+    );
+
+    renderAt("/quotes/q-1");
+
+    expect(await screen.findByText("1955 – present")).toBeInTheDocument();
+  });
+
+  it("uses the image's own alt_text when present", async () => {
+    getAuthorMock.mockResolvedValue(author({ image_id: "img-portrait" }));
+    getImageMock.mockResolvedValue(
+      image({
+        id: "img-portrait",
+        url: "https://example.test/portrait.jpg",
+        alt_text: "Bust of Aristotle, Roman copy",
+      })
+    );
+
+    renderAt("/quotes/q-1");
+
+    const img = await screen.findByAltText("Bust of Aristotle, Roman copy");
     expect(img).toHaveAttribute("src", "https://example.test/portrait.jpg");
   });
 

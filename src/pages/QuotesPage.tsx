@@ -661,9 +661,17 @@ export function QuotesPage() {
                     ) : (
                       <tr key={q.id}>
                         <td className="nowrap-strong" title={q.title}>
+                          {/*
+                            The visible label is truncated for table layout,
+                            but the link's accessible name must be the full
+                            title — `<td title=...>` is a tooltip hint and is
+                            not exposed as the link's name to screen readers
+                            or voice-control users.
+                          */}
                           <Link
                             to={`/quotes/${q.id}`}
                             className="row-title-link"
+                            aria-label={q.title}
                           >
                             {truncateMiddle(q.title, 28)}
                           </Link>
