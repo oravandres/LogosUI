@@ -8,6 +8,7 @@ import { getHealth } from "@/api/health";
 import { listImages } from "@/api/images";
 import { listQuotes } from "@/api/quotes";
 import { listTags } from "@/api/tags";
+import { ListSkeleton, Skeleton } from "@/components/Skeleton";
 
 // React Query keeps the previously resolved `data` when a refetch errors and
 // raises `isError` alongside it. Treat cached data as the source of truth and
@@ -136,7 +137,7 @@ export function HomePage() {
           </p>
         )}
         {!hasRecentData && recentQuotes.isPending && (
-          <p className="muted">Loading…</p>
+          <ListSkeleton rows={3} ariaLabel="Loading recent quotes" />
         )}
         {!hasRecentData && recentQuotes.isError && (
           <p className="error" role="alert">
@@ -189,19 +190,34 @@ function StatCard({
 }) {
   // Prefer the last known total whenever it is available — even if the most
   // recent refetch errored — so a brief network blip does not blank totals
-  // that were already successfully loaded. Fall back to the pending pip only
-  // when nothing has ever been fetched, and to the em-dash only when we are
-  // neither pending nor have any data in hand.
-  const value =
-    q.data?.total !== undefined
-      ? q.data.total.toLocaleString()
-      : q.isPending
-        ? "…"
-        : "—";
+  // that were already successfully loaded. Fall back to a skeleton while the
+  // initial fetch is in flight, and to the em-dash only when we are neither
+  // pending nor have any data in hand.
+  const hasValue = q.data?.total !== undefined;
+  const displayValue = hasValue
+    ? q.data!.total.toLocaleString()
+    : q.isPending
+      ? null
+      : "—";
+  const ariaValue = hasValue
+    ? displayValue!
+    : q.isPending
+      ? "loading"
+      : "—";
   return (
     <li className="stat-card">
-      <Link to={to} className="stat-card-link" aria-label={`${label}: ${value}`}>
-        <span className="stat-number">{value}</span>
+      <Link
+        to={to}
+        className="stat-card-link"
+        aria-label={`${label}: ${ariaValue}`}
+      >
+        <span className="stat-number">
+          {displayValue === null ? (
+            <Skeleton width="2.5rem" height="1.5rem" />
+          ) : (
+            displayValue
+          )}
+        </span>
         <span className="stat-label">{label}</span>
       </Link>
     </li>

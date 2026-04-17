@@ -68,6 +68,36 @@ describe("TagsPage", () => {
     await screen.findByText("wisdom");
   });
 
+  it("shows a loading skeleton before the first tags response resolves", async () => {
+    let resolve!: (value: ReturnType<typeof sampleList>) => void;
+    listTagsMock.mockImplementationOnce(
+      () =>
+        new Promise<ReturnType<typeof sampleList>>((r) => {
+          resolve = r;
+        })
+    );
+    renderPage();
+    expect(
+      await screen.findByRole("status", { name: /loading tags/i })
+    ).toBeInTheDocument();
+    resolve(sampleList());
+    await screen.findByText("wisdom");
+  });
+
+  it("shows the empty-state CTA when there are no tags, and focuses the create input on click", async () => {
+    listTagsMock.mockResolvedValueOnce({
+      items: [],
+      total: 0,
+      offset: 0,
+      limit: 20,
+    });
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByRole("heading", { level: 4, name: /no tags yet/i });
+    await user.click(screen.getByRole("button", { name: /create a tag/i }));
+    expect(screen.getByRole("textbox", { name: "Tag name" })).toHaveFocus();
+  });
+
   describe("create form", () => {
     it("validates that name is required", async () => {
       const user = userEvent.setup();
