@@ -71,9 +71,9 @@ Split out of Phase B because each requires plumbing that does not yet exist:
 - **"Open list with this author/tag"** links from the detail page need URL-search-param syncing in `QuotesPage` (currently filters live in component state only). `?tag=` also needs a backend filter on `GET /quotes` that the API does not expose today; coordinate with Logos before shipping.
 - **Inline Edit on the detail page** would duplicate the QuotesPage create/edit form. Worth doing once the form is itself extracted into a shared `<QuoteForm>` component; for now the detail page links to `/quotes` for editing.
 
-### Phase C — Global polish _(medium)_
+### ~~Phase C — Global polish~~ _(shipped)_
 
-Sliced into three independently-shippable PRs. C.1 and C.2 are done; C.3 is next.
+Sliced into three independently-shippable PRs. All three landed.
 
 #### ~~C.1 — Router error boundary + toasts~~ _(shipped)_
 
@@ -97,9 +97,14 @@ Sliced into three independently-shippable PRs. C.1 and C.2 are done; C.3 is next
  - `HomePage` already had `"No quotes yet — Create one."` and is unchanged.
 - Tests: new `Skeleton.test.tsx` (5) and `EmptyState.test.tsx` (2); `TagsPage.test.tsx` gains a loading-skeleton test and an empty-state CTA test; `CategoriesPage.test.tsx` gains both the filter-aware `Clear filter` path and the create-CTA empty state. Total suite: 107/107 passing. Lint, `tsc --noEmit`, and `vite build` all clean.
 
-#### C.3 — Dark mode _(next)_
+#### ~~C.3 — Dark mode~~ _(shipped)_
 
-- **Dark mode** via `prefers-color-scheme` with a CSS custom property palette (no runtime toggle in v1).
+- Dark mode ships via `prefers-color-scheme` with no runtime toggle in v1 — the OS preference is the single source of truth, which keeps the surface area small and avoids shipping a theming context, a storage key, and a flash-of-unstyled-content guard.
+- `src/index.css` now carries a **semantic CSS custom-property palette** on `:root`. Tokens are named by role (`--bg-page`, `--bg-panel`, `--text-primary`, `--text-muted`, `--border-subtle`, `--accent`, `--accent-soft-bg`, `--success-bg`, `--error-text-strong`, `--input-bg`, `--btn-primary-bg`, `--skeleton-base`, `--shadow-panel`, …), not hue, so component rules stay stable across palette evolutions.
+- A `@media (prefers-color-scheme: dark) { :root { … } }` block redefines the same token set with a dark palette (deep slate surfaces, softer borders, darker status panels, inverted skeleton shimmer, stronger shadows). Every component rule already reads colors through `var(--token)`, so the override flips the entire UI — header, nav, panels, tables (incl. hover and inline-edit rows), forms, buttons, toasts, empty states, combobox listbox + hover/active/selected states, chips, portrait fallback, skeletons, error-fallback — without a single site-specific override.
+- `:root { color-scheme: light dark; }` is declared so the user-agent chrome (scrollbars, native form controls, canvas default) follows the active palette.
+- Palette contract regression test in `src/test/palette.test.ts` reads the stylesheet and asserts that (a) `:root` declares `color-scheme: light dark`, (b) a `@media (prefers-color-scheme: dark)` override exists and redefines the load-bearing tokens (`--bg-page`, `--bg-panel`, `--bg-header`, `--text-primary`, `--text-body`, `--text-muted`, `--border-subtle`, `--input-bg`, `--input-text`, `--btn-primary-bg`, `--skeleton-base`), and (c) no component rule carries a raw hex — every color outside the two palette declarations flows through `var(--token)`. Total suite: **113/113 passing**. Lint, `tsc --noEmit`, and `vite build` clean.
+- No markup or component API changed; only `src/index.css` was touched (plus the new palette test). No runtime toggle, no theme provider, no local-storage key, no hydration flash — trivial to revisit later if a user-facing toggle becomes a requirement.
 
 ### Phase D — Observability _(small)_
 
