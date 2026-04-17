@@ -48,13 +48,13 @@ What is **not** shipped:
 
 ## 3. Next Development Phases
 
-### Phase A — Combobox primitive refactor _(small, low risk)_
+### ~~Phase A — Combobox primitive refactor~~ _(shipped)_
 
-Lift the keyboard contract currently inlined in `AuthorPicker` into a shared `<Combobox>` primitive. Future pickers (tag selection in create forms, category filters on mobile, etc.) will reuse it. The contract is already documented in `.cursor/rules/12-pr-review-lessons.mdc`.
+Lifted the keyboard contract previously inlined in `AuthorPicker` into a shared `<Combobox>` primitive. Future pickers compose it instead of forking the contract; the rule in `.cursor/rules/12-pr-review-lessons.mdc` now points at `src/components/Combobox.tsx`.
 
-- Introduce `src/components/Combobox.tsx` implementing the contract (arrow/Home/End/Enter/Escape, `aria-activedescendant`, `onMouseDown` preventDefault, auto-scroll, active/selected styles).
-- Rewrite `AuthorPicker` in terms of it without changing its public API.
-- Unit tests for the primitive directly (not only through `AuthorPicker`).
+- `src/components/Combobox.tsx` owns the WAI-ARIA combobox contract (Arrow/Home/End/Enter/Escape, `aria-activedescendant`, `onMouseDown` preventDefault, auto-scroll, active/selected styles, header/footer/empty-state slots).
+- `AuthorPicker` is now a thin search/resolve adapter on top of the primitive — public API unchanged.
+- Direct unit tests for the primitive in `Combobox.test.tsx` cover ARIA wiring, keyboard navigation, mouse commit, hover sync, custom rendering, and slot composition.
 
 ### Phase B — Quote detail view _(medium)_
 
