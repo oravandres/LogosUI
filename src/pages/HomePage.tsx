@@ -154,7 +154,7 @@ export function HomePage() {
               const author = authorDisplayById.get(q.author_id);
               return (
                 <li key={q.id} className="recent-item">
-                  <Link to="/quotes" className="recent-title">
+                  <Link to={`/quotes/${q.id}`} className="recent-title">
                     {q.title}
                   </Link>
                   <p className="recent-text">{q.text}</p>
