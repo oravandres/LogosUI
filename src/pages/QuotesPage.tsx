@@ -32,6 +32,8 @@ import {
 } from "@/api/tags";
 import type { QuoteWriteBody } from "@/api/types";
 import { AuthorPicker } from "@/components/AuthorPicker";
+import { EmptyState } from "@/components/EmptyState";
+import { ListSkeleton } from "@/components/Skeleton";
 import { useToast } from "@/components/useToast";
 
 const SEARCH_DEBOUNCE_MS = 400;
@@ -194,6 +196,25 @@ export function QuotesPage() {
   const [formImageId, setFormImageId] = useState("");
   const [formCategoryId, setFormCategoryId] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
+  const formTitleInputRef = useRef<HTMLInputElement | null>(null);
+
+  const focusCreateForm = () => {
+    formTitleInputRef.current?.focus();
+  };
+
+  const clearFilters = () => {
+    setCategoryFilterId("");
+    setAuthorFilterId("");
+    setTitleInput("");
+    setAppliedTitle("");
+    lastAppliedTitleRef.current = "";
+    setOffset(0);
+  };
+
+  const hasActiveFilter =
+    categoryFilterId !== "" ||
+    authorFilterId !== "" ||
+    appliedTitle !== "";
 
   // Inline edit state
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -375,6 +396,7 @@ export function QuotesPage() {
           <label className="field field-span-2">
             <span className="field-label">Title</span>
             <input
+              ref={formTitleInputRef}
               className="input"
               value={formTitle}
               onChange={(ev) => setFormTitle(ev.target.value)}
@@ -519,7 +541,7 @@ export function QuotesPage() {
         </p>
 
         {listQuery.isPending && !page ? (
-          <p className="muted">Loading…</p>
+          <ListSkeleton rows={5} ariaLabel="Loading quotes" />
         ) : listQuery.isError && !page ? (
           <p className="error">
             {listQuery.error instanceof ApiError
@@ -533,7 +555,29 @@ export function QuotesPage() {
         ) : null}
 
         {page && page.items.length === 0 && !listQuery.isPending ? (
-          <p className="muted">No quotes in this view.</p>
+          hasActiveFilter ? (
+            <EmptyState
+              title="No quotes match your filters"
+              description="Try a different search, author, or category, or clear the filters to see everything."
+            >
+              <button type="button" className="btn" onClick={clearFilters}>
+                Clear filters
+              </button>
+            </EmptyState>
+          ) : (
+            <EmptyState
+              title="No quotes yet"
+              description="Capture your first quote to start building the corpus."
+            >
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={focusCreateForm}
+              >
+                Create a quote
+              </button>
+            </EmptyState>
+          )
         ) : page && page.items.length > 0 ? (
           <>
             <div

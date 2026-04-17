@@ -16,6 +16,8 @@ import {
   updateCategory,
 } from "@/api/categories";
 import type { CategoryWriteBody } from "@/api/types";
+import { EmptyState } from "@/components/EmptyState";
+import { ListSkeleton } from "@/components/Skeleton";
 import { useToast } from "@/components/useToast";
 
 const TYPE_OPTIONS: { value: CategoryTypeFilter; label: string }[] = [
@@ -122,6 +124,11 @@ export function CategoriesPage() {
   const [formType, setFormType] =
     useState<CategoryWriteBody["type"]>("quote");
   const [formError, setFormError] = useState<string | null>(null);
+  const formNameInputRef = useRef<HTMLInputElement | null>(null);
+
+  const focusCreateForm = () => {
+    formNameInputRef.current?.focus();
+  };
 
   // Inline edit state
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -201,6 +208,7 @@ export function CategoriesPage() {
           <label className="field">
             <span className="field-label">Name</span>
             <input
+              ref={formNameInputRef}
               className="input"
               value={formName}
               onChange={(ev) => setFormName(ev.target.value)}
@@ -271,7 +279,7 @@ export function CategoriesPage() {
         </div>
 
         {listQuery.isPending && !page ? (
-          <p className="muted">Loading…</p>
+          <ListSkeleton rows={5} ariaLabel="Loading categories" />
         ) : listQuery.isError && !page ? (
           <p className="error">
             {listQuery.error instanceof ApiError
@@ -285,7 +293,33 @@ export function CategoriesPage() {
         ) : null}
 
         {page && page.items.length === 0 && !listQuery.isPending ? (
-          <p className="muted">No categories in this view.</p>
+          typeFilter !== "" ? (
+            <EmptyState
+              title="No categories match this filter"
+              description="Try a different type, or clear the filter to see everything."
+            >
+              <button
+                type="button"
+                className="btn"
+                onClick={() => onFilterChange("")}
+              >
+                Clear filter
+              </button>
+            </EmptyState>
+          ) : (
+            <EmptyState
+              title="No categories yet"
+              description="Create your first category to start organising quotes, authors, and images."
+            >
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={focusCreateForm}
+              >
+                Create a category
+              </button>
+            </EmptyState>
+          )
         ) : page && page.items.length > 0 ? (
           <>
             <div

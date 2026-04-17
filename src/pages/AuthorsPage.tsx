@@ -23,6 +23,8 @@ import {
 import { listAllCategoriesByType } from "@/api/categories";
 import { getImage, listImages } from "@/api/images";
 import type { AuthorWriteBody } from "@/api/types";
+import { EmptyState } from "@/components/EmptyState";
+import { ListSkeleton } from "@/components/Skeleton";
 import { useToast } from "@/components/useToast";
 
 const SEARCH_DEBOUNCE_MS = 400;
@@ -179,6 +181,21 @@ export function AuthorsPage() {
   const [formImageId, setFormImageId] = useState("");
   const [formCategoryId, setFormCategoryId] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
+  const formNameInputRef = useRef<HTMLInputElement | null>(null);
+
+  const focusCreateForm = () => {
+    formNameInputRef.current?.focus();
+  };
+
+  const clearFilters = () => {
+    setCategoryFilterId("");
+    setSearchInput("");
+    setAppliedSearch("");
+    lastAppliedSearchRef.current = "";
+    setOffset(0);
+  };
+
+  const hasActiveFilter = categoryFilterId !== "" || appliedSearch !== "";
 
   // Inline edit state
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -328,6 +345,7 @@ export function AuthorsPage() {
           <label className="field field-span-2">
             <span className="field-label">Name</span>
             <input
+              ref={formNameInputRef}
               className="input"
               value={formName}
               onChange={(ev) => setFormName(ev.target.value)}
@@ -469,7 +487,7 @@ export function AuthorsPage() {
         </p>
 
         {listQuery.isPending && !page ? (
-          <p className="muted">Loading…</p>
+          <ListSkeleton rows={5} ariaLabel="Loading authors" />
         ) : listQuery.isError && !page ? (
           <p className="error">
             {listQuery.error instanceof ApiError
@@ -483,7 +501,29 @@ export function AuthorsPage() {
         ) : null}
 
         {page && page.items.length === 0 && !listQuery.isPending ? (
-          <p className="muted">No authors in this view.</p>
+          hasActiveFilter ? (
+            <EmptyState
+              title="No authors match your filters"
+              description="Try a different search or category, or clear the filters to see everyone."
+            >
+              <button type="button" className="btn" onClick={clearFilters}>
+                Clear filters
+              </button>
+            </EmptyState>
+          ) : (
+            <EmptyState
+              title="No authors yet"
+              description="Add your first author so quotes can be attributed."
+            >
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={focusCreateForm}
+              >
+                Create an author
+              </button>
+            </EmptyState>
+          )
         ) : page && page.items.length > 0 ? (
           <>
             <div

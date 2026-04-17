@@ -16,6 +16,8 @@ import {
   updateImage,
 } from "@/api/images";
 import type { ImageWriteBody } from "@/api/types";
+import { EmptyState } from "@/components/EmptyState";
+import { ListSkeleton } from "@/components/Skeleton";
 import { useToast } from "@/components/useToast";
 import { safeHttpHref } from "@/url/safeHttpUrl";
 
@@ -115,6 +117,11 @@ export function ImagesPage() {
   const [formAlt, setFormAlt] = useState("");
   const [formCategoryId, setFormCategoryId] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
+  const formUrlInputRef = useRef<HTMLInputElement | null>(null);
+
+  const focusCreateForm = () => {
+    formUrlInputRef.current?.focus();
+  };
 
   // Inline edit state
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -213,6 +220,7 @@ export function ImagesPage() {
           <label className="field field-span-2">
             <span className="field-label">URL</span>
             <input
+              ref={formUrlInputRef}
               className="input"
               type="text"
               value={formUrl}
@@ -302,7 +310,7 @@ export function ImagesPage() {
         </div>
 
         {listQuery.isPending && !page ? (
-          <p className="muted">Loading…</p>
+          <ListSkeleton rows={5} ariaLabel="Loading images" />
         ) : listQuery.isError && !page ? (
           <p className="error">
             {listQuery.error instanceof ApiError
@@ -316,7 +324,33 @@ export function ImagesPage() {
         ) : null}
 
         {page && page.items.length === 0 && !listQuery.isPending ? (
-          <p className="muted">No images in this view.</p>
+          categoryFilterId !== "" ? (
+            <EmptyState
+              title="No images match this filter"
+              description="Try a different category, or clear the filter to see everything."
+            >
+              <button
+                type="button"
+                className="btn"
+                onClick={() => onFilterChange("")}
+              >
+                Clear filter
+              </button>
+            </EmptyState>
+          ) : (
+            <EmptyState
+              title="No images yet"
+              description="Register your first image to start attaching visuals to quotes."
+            >
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={focusCreateForm}
+              >
+                Register an image
+              </button>
+            </EmptyState>
+          )
         ) : page && page.items.length > 0 ? (
           <>
             <div

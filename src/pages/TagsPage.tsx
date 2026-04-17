@@ -14,6 +14,8 @@ import {
   listTags,
 } from "@/api/tags";
 import type { TagWriteBody } from "@/api/types";
+import { EmptyState } from "@/components/EmptyState";
+import { ListSkeleton } from "@/components/Skeleton";
 import { useToast } from "@/components/useToast";
 
 type DeleteTagVars = {
@@ -77,6 +79,11 @@ export function TagsPage() {
 
   const [formName, setFormName] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
+  const formNameInputRef = useRef<HTMLInputElement | null>(null);
+
+  const focusCreateForm = () => {
+    formNameInputRef.current?.focus();
+  };
 
   const page = listQuery.data;
   const rangeStart = page ? page.offset + 1 : 0;
@@ -126,6 +133,7 @@ export function TagsPage() {
           <label className="field">
             <span className="field-label">Name</span>
             <input
+              ref={formNameInputRef}
               className="input"
               value={formName}
               onChange={(ev) => setFormName(ev.target.value)}
@@ -164,7 +172,7 @@ export function TagsPage() {
         </div>
 
         {listQuery.isPending && !page ? (
-          <p className="muted">Loading…</p>
+          <ListSkeleton rows={5} ariaLabel="Loading tags" />
         ) : listQuery.isError && !page ? (
           <p className="error">
             {listQuery.error instanceof ApiError
@@ -178,7 +186,18 @@ export function TagsPage() {
         ) : null}
 
         {page && page.items.length === 0 && !listQuery.isPending ? (
-          <p className="muted">No tags yet.</p>
+          <EmptyState
+            title="No tags yet"
+            description="Create your first tag to start grouping quotes."
+          >
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={focusCreateForm}
+            >
+              Create a tag
+            </button>
+          </EmptyState>
         ) : page && page.items.length > 0 ? (
           <>
             <div

@@ -7,6 +7,7 @@ import { getImage } from "@/api/images";
 import { deleteQuote, getQuote } from "@/api/quotes";
 import { listQuoteTags } from "@/api/tags";
 import type { Author, Category, Image, Quote, Tag } from "@/api/types";
+import { Skeleton } from "@/components/Skeleton";
 import { useToast } from "@/components/useToast";
 
 /**
@@ -118,7 +119,7 @@ export function QuoteDetailPage() {
       </p>
 
       {quoteQuery.isPending && !quote ? (
-        <p className="muted">Loading…</p>
+        <QuoteDetailSkeleton />
       ) : null}
 
       {quoteQuery.isError && !quote ? (
@@ -178,7 +179,12 @@ export function QuoteDetailPage() {
             <div className="panel">
               <h3 className="panel-title">Image</h3>
               {quoteImageQuery.isPending ? (
-                <p className="muted">Loading image…</p>
+                <Skeleton
+                  variant="rect"
+                  width="100%"
+                  height="12rem"
+                  ariaLabel="Loading image"
+                />
               ) : quoteImage ? (
                 <figure className="quote-image">
                   <img
@@ -211,7 +217,7 @@ export function QuoteDetailPage() {
                   {!categoryId ? (
                     <span className="muted">None</span>
                   ) : categoryQuery.isPending ? (
-                    <span className="muted">Loading…</span>
+                    <Skeleton width="6rem" height="1rem" ariaLabel="Loading category" />
                   ) : category ? (
                     <span className="tag-chip tag-chip-static">
                       {category.name}
@@ -304,7 +310,11 @@ function AuthorBlock({
         </div>
         <div className="author-text">
           {authorState === "pending" ? (
-            <p className="muted">Loading author…</p>
+            <div className="author-text-skeleton">
+              <Skeleton width="10rem" height="1.1rem" ariaLabel="Loading author" />
+              <Skeleton width="16rem" height="0.8rem" />
+              <Skeleton width="8rem" height="0.75rem" />
+            </div>
           ) : authorState === "error" ? (
             <p className="error">
               Could not load author{" "}
@@ -340,7 +350,7 @@ function TagList({
   };
 }) {
   if (query.isPending) {
-    return <span className="muted">Loading…</span>;
+    return <Skeleton width="8rem" height="1rem" ariaLabel="Loading tags" />;
   }
   if (query.isError) {
     // 404 specifically means the parent quote is gone (rare here because the
@@ -364,6 +374,28 @@ function TagList({
         </li>
       ))}
     </ul>
+  );
+}
+
+function QuoteDetailSkeleton() {
+  return (
+    <div
+      className="quote-detail-skeleton"
+      role="status"
+      aria-live="polite"
+      aria-label="Loading quote"
+    >
+      <Skeleton width="65%" height="1.75rem" />
+      <div className="panel quote-body" aria-hidden="true">
+        <Skeleton width="95%" height="1rem" />
+        <Skeleton width="90%" height="1rem" />
+        <Skeleton width="75%" height="1rem" />
+      </div>
+      <div className="panel" aria-hidden="true">
+        <Skeleton width="8rem" height="1rem" />
+        <Skeleton width="40%" height="1rem" />
+      </div>
+    </div>
   );
 }
 

@@ -140,6 +140,48 @@ describe("CategoriesPage inline edit", () => {
     await screen.findByText(/Category "Gamma" created/);
   });
 
+  it("shows the filter-aware empty state with a Clear filter button when a type filter yields nothing", async () => {
+    listCategoriesMock.mockImplementation(async (args: { type?: string }) => {
+      if (args?.type === "image") {
+        return { items: [], total: 0, offset: 0, limit: 20 };
+      }
+      return sampleList();
+    });
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText("Alpha");
+
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: /filter by type/i }),
+      "image"
+    );
+    await screen.findByRole("heading", {
+      level: 4,
+      name: /no categories match this filter/i,
+    });
+    await user.click(screen.getByRole("button", { name: /clear filter/i }));
+    await screen.findByText("Alpha");
+  });
+
+  it("shows the create CTA empty state when the whole list is empty, and focuses the name input on click", async () => {
+    listCategoriesMock.mockResolvedValueOnce({
+      items: [],
+      total: 0,
+      offset: 0,
+      limit: 20,
+    });
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByRole("heading", {
+      level: 4,
+      name: /no categories yet/i,
+    });
+    await user.click(
+      screen.getByRole("button", { name: /create a category/i })
+    );
+    expect(screen.getByRole("textbox", { name: /^name$/i })).toHaveFocus();
+  });
+
   it("emits an error toast when update fails (alongside the inline banner)", async () => {
     updateCategoryMock.mockRejectedValueOnce(
       new ApiError("Category is locked", 500, {})

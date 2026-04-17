@@ -73,7 +73,7 @@ Split out of Phase B because each requires plumbing that does not yet exist:
 
 ### Phase C — Global polish _(medium)_
 
-Sliced into three independently-shippable PRs. C.1 is done; C.2 and C.3 are next.
+Sliced into three independently-shippable PRs. C.1 and C.2 are done; C.3 is next.
 
 #### ~~C.1 — Router error boundary + toasts~~ _(shipped)_
 
@@ -82,12 +82,22 @@ Sliced into three independently-shippable PRs. C.1 is done; C.2 and C.3 are next
 - Every `useMutation` across the six pages now toasts: `success("Quote \"…\" created")` etc. on success, and `error("Could not create quote", err)` on failure (alongside the existing inline banner — the toast is additive, the banner is not removed).
 - Tests: `ErrorBoundary.test.tsx` (4) + `ToastProvider.test.tsx` (7) + integration assertions in `CategoriesPage.test.tsx`. Total suite: 94/94 passing.
 
-#### C.2 — Skeleton loaders + empty-state CTAs _(next)_
+#### ~~C.2 — Skeleton loaders + empty-state CTAs~~ _(shipped)_
 
-- **Skeleton loaders** on list pages and the home dashboard instead of "Loading…" strings.
-- **Empty-state CTAs** on every list page ("No quotes yet — create one"), not only on the home page.
+- `<Skeleton>` primitive (`src/components/Skeleton.tsx`) renders `rect` / `text` / `circle` placeholder blocks with a shimmer that respects `prefers-reduced-motion` (the animation is stripped and the block degrades to a flat muted fill). Decorative by default (`aria-hidden="true"`); callers pass `ariaLabel` when the skeleton is the only signal and needs to be wrapped in a polite live region.
+- `<ListSkeleton rows={n} ariaLabel="Loading …">` renders a stack of two-line skeleton rows, owns the `role="status" aria-live="polite"` announcement, and replaces the `"Loading…"` string on every list panel that renders `<ListSkeleton>` before any page has loaded.
+- **Replacements applied**:
+ - `HomePage`: each `StatCard` pending pip is now a `<Skeleton width="2.5rem" height="1.5rem" />`. The `aria-label` still carries `"Quotes: 12"` / `"Quotes: loading"` / `"Quotes: —"` so screen readers and the existing tests both see a stable label. Recent quotes loading state uses `<ListSkeleton rows={3} />` instead of `"Loading…"`.
+ - `CategoriesPage`, `ImagesPage`, `AuthorsPage`, `QuotesPage`, `TagsPage`: initial list loading uses `<ListSkeleton rows={5}>` with the right `ariaLabel`. Existing "Updating…" fetch hint on top of cached data is unchanged — we still keep the table visible during refetches.
+ - `QuoteDetailPage`: top-level `"Loading…"` is a shaped `<QuoteDetailSkeleton>` (title + body + meta block). Author loading state shows three stacked skeleton lines inside the author card; image slot uses a full-width `<Skeleton variant="rect">`; category and tag-list cells use inline skeletons.
+- `<EmptyState>` (`src/components/EmptyState.tsx`) renders a dashed panel with an optional title, description, and action row. Callers pass action buttons so pages can offer context-appropriate CTAs without the component knowing about routing or form refs.
+- **Empty-state CTAs**:
+ - Each list page's create form's primary input now has a `ref`. When the full list is empty, the page renders an `<EmptyState>` like `"No categories yet — Create a category"` whose button calls `ref.current?.focus()`, scrolling the form into view and focusing the first field.
+ - Pages that expose filters (`CategoriesPage` type, `ImagesPage` category, `AuthorsPage` search + category, `QuotesPage` title + author + category) render a **filter-aware** empty state when the filtered view comes back empty but filters are active: `"No X match your filters"` with a `Clear filters` button that resets every filter (and search input + debounced applied-search + last-applied ref for the search-based pages) in one click, then snaps back to `offset = 0`.
+ - `HomePage` already had `"No quotes yet — Create one."` and is unchanged.
+- Tests: new `Skeleton.test.tsx` (5) and `EmptyState.test.tsx` (2); `TagsPage.test.tsx` gains a loading-skeleton test and an empty-state CTA test; `CategoriesPage.test.tsx` gains both the filter-aware `Clear filter` path and the create-CTA empty state. Total suite: 107/107 passing. Lint, `tsc --noEmit`, and `vite build` all clean.
 
-#### C.3 — Dark mode
+#### C.3 — Dark mode _(next)_
 
 - **Dark mode** via `prefers-color-scheme` with a CSS custom property palette (no runtime toggle in v1).
 
