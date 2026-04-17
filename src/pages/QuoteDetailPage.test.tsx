@@ -144,6 +144,40 @@ describe("QuoteDetailPage", () => {
     expect(getQuoteMock).toHaveBeenCalledWith("q-1", expect.anything());
   });
 
+  it("shows a neutral portrait loading placeholder (no '?') while the author query is pending", async () => {
+    // Hold the author request in-flight so we can observe the pending state.
+    let resolveAuthor!: (value: ReturnType<typeof author>) => void;
+    getAuthorMock.mockImplementationOnce(
+      () =>
+        new Promise<ReturnType<typeof author>>((r) => {
+          resolveAuthor = r;
+        })
+    );
+
+    const { container } = renderAt("/quotes/q-1");
+
+    // Quote resolves, author does not yet.
+    await screen.findByText("On Virtue");
+
+    // Author-text skeleton is the live-region announcing the pending author.
+    expect(
+      await screen.findByRole("status", { name: /loading author/i })
+    ).toBeInTheDocument();
+
+    // Portrait slot renders the neutral loading placeholder, not the "?"
+    // missing-data glyph.
+    const loadingPortrait = container.querySelector(
+      ".author-portrait .author-portrait-loading"
+    );
+    expect(loadingPortrait).not.toBeNull();
+    expect(container.querySelector(".author-portrait")).not.toHaveTextContent(
+      "?"
+    );
+
+    resolveAuthor(author());
+    await screen.findByText("Aristotle");
+  });
+
   it("does not fetch ancillary resources when the quote omits them", async () => {
     renderAt("/quotes/q-1");
     await screen.findByText("On Virtue");

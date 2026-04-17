@@ -14,11 +14,12 @@ describe("Skeleton", () => {
     expect(style.height).toBe("1rem");
   });
 
-  it("wraps with a polite live region and screen-reader label when ariaLabel is provided", () => {
+  it("wraps with a polite live region and an aria-label when ariaLabel is provided", () => {
     render(<Skeleton ariaLabel="Loading total" />);
-    const status = screen.getByRole("status");
+    // `role="status"` uses nameFrom="author"; the accessible name must come
+    // from aria-label (or aria-labelledby), not descendant text.
+    const status = screen.getByRole("status", { name: "Loading total" });
     expect(status).toHaveAttribute("aria-live", "polite");
-    expect(status).toHaveTextContent("Loading total");
   });
 
   it("supports the circle variant", () => {
@@ -26,6 +27,36 @@ describe("Skeleton", () => {
     const el = container.querySelector(".skeleton");
     expect(el).toHaveClass("skeleton-circle");
     expect((el as HTMLElement).style.width).toBe("32px");
+  });
+
+  it("in block mode the live-region wrapper takes the requested size so percentage widths resolve against the layout parent", () => {
+    const { container } = render(
+      <Skeleton
+        width="100%"
+        height="12rem"
+        ariaLabel="Loading image"
+        block
+      />
+    );
+    // Wrapper is a <div role="status"> so it participates in block layout.
+    const wrapper = container.querySelector(".skeleton-live-block");
+    expect(wrapper).not.toBeNull();
+    expect((wrapper as HTMLElement).tagName).toBe("DIV");
+    expect((wrapper as HTMLElement).style.width).toBe("100%");
+    expect((wrapper as HTMLElement).style.height).toBe("12rem");
+    // Inner shimmer fills the wrapper (no explicit percentage resolved against
+    // a shrink-to-fit ancestor).
+    const inner = wrapper!.querySelector(".skeleton") as HTMLElement;
+    expect(inner.style.width).toBe("100%");
+    expect(inner.style.height).toBe("100%");
+  });
+
+  it("in block mode without a label still renders a block wrapper and keeps the content aria-hidden", () => {
+    const { container } = render(<Skeleton width="100%" height="4rem" block />);
+    const wrapper = container.querySelector(".skeleton-block") as HTMLElement;
+    expect(wrapper).not.toBeNull();
+    expect(wrapper.getAttribute("aria-hidden")).toBe("true");
+    expect(wrapper.style.width).toBe("100%");
   });
 });
 

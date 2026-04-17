@@ -3,8 +3,14 @@ import type { ReactNode } from "react";
 interface EmptyStateProps {
   /** Short heading, e.g. "No categories yet". Rendered as an h4. */
   title?: string;
-  /** Explanation and/or CTA copy. Plain text or React. */
-  description?: ReactNode;
+  /**
+   * Short explanatory sentence. Plain text only: it is rendered inside a
+   * `<p>`, so embedding block markup (other paragraphs, lists, links with
+   * nested block content, etc.) would produce invalid HTML. For rich
+   * content, supply it via `children` and let the caller provide the
+   * block element.
+   */
+  description?: string;
   /** Optional action row (e.g. a primary button + clear-filters link). */
   children?: ReactNode;
 }

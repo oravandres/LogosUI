@@ -184,6 +184,7 @@ export function QuoteDetailPage() {
                   width="100%"
                   height="12rem"
                   ariaLabel="Loading image"
+                  block
                 />
               ) : quoteImage ? (
                 <figure className="quote-image">
@@ -281,7 +282,16 @@ function AuthorBlock({
       <h3 className="panel-title">Author</h3>
       <div className="author-block">
         <div className="author-portrait">
-          {author?.image_id ? (
+          {authorState === "pending" ? (
+            // While the author query is in flight we don't yet know whether
+            // there's a portrait, initials, or nothing at all — render a
+            // neutral loading placeholder so the portrait slot doesn't read
+            // as missing data ("?") next to the author-text skeleton.
+            <div
+              className="author-portrait-fallback author-portrait-loading"
+              aria-hidden="true"
+            />
+          ) : author?.image_id ? (
             portrait ? (
               // The author's name is already announced as the adjacent
               // heading; without distinct alt text the portrait is purely
