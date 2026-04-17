@@ -127,16 +127,27 @@ export function Combobox({
     [autoId, options.length]
   );
 
-  // Reset the active option whenever the option set or open state changes.
-  // We do this in a single effect (rather than two) so the active index can
-  // never dangle past the end of a shrinking option set.
+  // Every time the listbox transitions to open, restart at the first row.
+  // The keyboard contract is "reopening always starts from the top": without
+  // this reset, ArrowDown to row 3 → Escape → reopen → Enter would commit
+  // the stale row 3 instead of row 0, and any consumer that re-mounts the
+  // listbox between sessions would inherit whichever row happened to be
+  // active when it last closed.
   useEffect(() => {
     if (!isOpen) return;
-    if (options.length === 0) {
-      setActiveIndex(-1);
-      return;
-    }
+    setActiveIndex(options.length > 0 ? 0 : -1);
+    // Intentionally depends only on `isOpen` so this fires once per open
+    // transition. Mid-session option-count changes are handled by the clamp
+    // effect below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
+
+  // Clamp the active index when the option set shrinks while the listbox is
+  // already open, so the active row never dangles past the end of the list.
+  useEffect(() => {
+    if (!isOpen) return;
     setActiveIndex((i) => {
+      if (options.length === 0) return -1;
       if (i < 0) return 0;
       if (i >= options.length) return options.length - 1;
       return i;

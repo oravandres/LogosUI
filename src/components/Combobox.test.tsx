@@ -305,6 +305,40 @@ describe("Combobox", () => {
     expect(input.value).toBe("Pla");
   });
 
+  // Regression: closing the listbox and reopening it must reset the active
+  // option to the first row. An earlier version only clamped the previous
+  // `activeIndex`, so ArrowDown to row 3 → Escape → reopen → Enter committed
+  // the stale row 3 instead of row 1. Future pickers compose this primitive
+  // and would silently inherit that bug.
+  it("resets the active option to the first row on every reopen", async () => {
+    const user = userEvent.setup();
+    const onSelect = vi.fn();
+    render(<Harness options={makeOptions(5)} onSelect={onSelect} />);
+
+    const input = screen.getByRole("combobox", { name: "Picker" });
+    await user.click(input);
+    await user.keyboard("{ArrowDown}{ArrowDown}");
+    const opts = within(screen.getByRole("listbox")).getAllByRole("option");
+    expect(input).toHaveAttribute("aria-activedescendant", opts[2].id);
+
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+
+    await user.click(input);
+    const reopened = within(screen.getByRole("listbox")).getAllByRole(
+      "option"
+    );
+    expect(input).toHaveAttribute(
+      "aria-activedescendant",
+      reopened[0].id
+    );
+    expect(reopened[0]).toHaveClass("combobox-option-active");
+
+    await user.keyboard("{Enter}");
+    expect(onSelect).toHaveBeenCalledTimes(1);
+    expect(onSelect).toHaveBeenCalledWith("id-1");
+  });
+
   // Regression: DOM ids must not be derived from the committed `value`. A
   // clearable combobox has a row with `value=""` alongside regular rows, and
   // consumers can legitimately have an option with `value="none"`. Earlier
