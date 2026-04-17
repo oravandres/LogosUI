@@ -113,11 +113,18 @@ export function Combobox({
 
   const [activeIndex, setActiveIndex] = useState(0);
 
-  // The DOM id we expose for each row, derived from the option's `value` so
-  // that consumers can build stable references if they need them.
+  // Stable DOM ids for each row, keyed by position within the listbox. We
+  // intentionally do not derive these from `opt.value`: the committed value
+  // is an opaque consumer-supplied string (e.g. an author id), so overloading
+  // it as an id-namespace would collide when two options share a value, when
+  // the value is empty, or when a consumer has a legitimate `"none"` option.
   const optionDomIds = useMemo(
-    () => options.map((opt) => `${autoId}-opt-${opt.value || "none"}`),
-    [autoId, options]
+    () => options.map((_, i) => `${autoId}-opt-${i}`),
+    // Only the count matters — ids are position-based and decoupled from
+    // option identity, so reshuffling the same-length list must not change
+    // the id array.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [autoId, options.length]
   );
 
   // Reset the active option whenever the option set or open state changes.

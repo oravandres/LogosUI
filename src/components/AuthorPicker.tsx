@@ -5,7 +5,6 @@ import { Combobox, type ComboboxOption } from "@/components/Combobox";
 
 const DEBOUNCE_MS = 250;
 const SEARCH_LIMIT = 20;
-const NONE_VALUE = "__none__";
 
 export type AuthorPickerProps = {
   /** Selected author id, or `""` for no selection. */
@@ -79,11 +78,16 @@ export function AuthorPicker({
   );
   const total = searchQuery.data?.total ?? 0;
 
+  // The "clear" row uses `""` as its committed value. Author ids are opaque
+  // backend strings, so we must not invent a sentinel in that namespace — a
+  // real author with that id would otherwise become unselectable. The empty
+  // string is already the "no selection" value in this component's public
+  // API, so it maps cleanly to the clear row without any round-tripping.
   const options: ComboboxOption[] = useMemo(() => {
     const opts: ComboboxOption[] = [];
     if (allowNone) {
       opts.push({
-        value: NONE_VALUE,
+        value: "",
         label: noneLabel,
         render: () => <span className="muted">{noneLabel}</span>,
       });
@@ -137,10 +141,8 @@ export function AuthorPicker({
   return (
     <Combobox
       options={options}
-      value={value === "" ? NONE_VALUE : value}
-      onSelect={(selected) =>
-        onChange(selected === NONE_VALUE ? "" : selected)
-      }
+      value={value}
+      onSelect={onChange}
       query={query}
       onQueryChange={setQuery}
       displayValue={displayValue}

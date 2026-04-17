@@ -304,4 +304,33 @@ describe("Combobox", () => {
     await user.type(input, "Pla");
     expect(input.value).toBe("Pla");
   });
+
+  // Regression: DOM ids must not be derived from the committed `value`. A
+  // clearable combobox has a row with `value=""` alongside regular rows, and
+  // consumers can legitimately have an option with `value="none"`. Earlier
+  // versions collapsed both into the same `"-opt-none"` id, which produced
+  // duplicate DOM ids, duplicate React keys, and ambiguous
+  // `aria-activedescendant` targets.
+  it("assigns a unique DOM id to each option even when values are empty or collide with prior sentinels", async () => {
+    const user = userEvent.setup();
+    const options: ComboboxOption[] = [
+      { value: "", label: "All" },
+      { value: "none", label: "Literal none" },
+      { value: "a", label: "Aristotle" },
+    ];
+    render(<Harness options={options} />);
+
+    const input = screen.getByRole("combobox", { name: "Picker" });
+    await user.click(input);
+    const opts = within(screen.getByRole("listbox")).getAllByRole("option");
+    const ids = opts.map((o) => o.id);
+
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(ids.every(Boolean)).toBe(true);
+
+    await user.keyboard("{ArrowDown}");
+    expect(input).toHaveAttribute("aria-activedescendant", ids[1]);
+    await user.keyboard("{ArrowDown}");
+    expect(input).toHaveAttribute("aria-activedescendant", ids[2]);
+  });
 });
