@@ -32,6 +32,7 @@ import {
 } from "@/api/tags";
 import type { QuoteWriteBody } from "@/api/types";
 import { AuthorPicker } from "@/components/AuthorPicker";
+import { useToast } from "@/components/useToast";
 
 const SEARCH_DEBOUNCE_MS = 400;
 
@@ -54,6 +55,7 @@ type UpdateQuoteVars = {
 
 export function QuotesPage() {
   const queryClient = useQueryClient();
+  const toast = useToast();
   const [categoryFilterId, setCategoryFilterId] = useState("");
   const [authorFilterId, setAuthorFilterId] = useState("");
   const [titleInput, setTitleInput] = useState("");
@@ -133,7 +135,7 @@ export function QuotesPage() {
 
   const createMutation = useMutation({
     mutationFn: (body: QuoteWriteBody) => createQuote(body),
-    onSuccess: async () => {
+    onSuccess: async (_data, vars) => {
       await queryClient.invalidateQueries({ queryKey: ["quotes"] });
       setFormTitle("");
       setFormText("");
@@ -141,21 +143,25 @@ export function QuotesPage() {
       setFormImageId("");
       setFormCategoryId("");
       setFormError(null);
+      toast.success(`Quote "${vars.title}" created`);
     },
     onError: (err) => {
       setFormError(err instanceof ApiError ? err.message : String(err));
+      toast.error("Could not create quote", err);
     },
   });
 
   const updateMutation = useMutation({
     mutationFn: ({ id, body }: UpdateQuoteVars) => updateQuote(id, body),
-    onSuccess: async () => {
+    onSuccess: async (_data, vars) => {
       await queryClient.invalidateQueries({ queryKey: ["quotes"] });
       setEditingId(null);
       setEditError(null);
+      toast.success(`Quote "${vars.body.title}" updated`);
     },
     onError: (err) => {
       setEditError(err instanceof ApiError ? err.message : String(err));
+      toast.error("Could not update quote", err);
     },
   });
 
@@ -175,6 +181,10 @@ export function QuotesPage() {
         });
       }
       await queryClient.invalidateQueries({ queryKey: ["quotes"] });
+      toast.success("Quote deleted");
+    },
+    onError: (err) => {
+      toast.error("Could not delete quote", err);
     },
   });
 
@@ -883,6 +893,7 @@ function QuoteTagsEditorRow({
   onClose,
 }: QuoteTagsEditorRowProps) {
   const queryClient = useQueryClient();
+  const toast = useToast();
   const [addId, setAddId] = useState("");
   const [localError, setLocalError] = useState<string | null>(null);
   /**
@@ -908,12 +919,19 @@ function QuoteTagsEditorRow({
 
   const addMutation = useMutation({
     mutationFn: (tagId: string) => addTagToQuote(quoteId, tagId),
-    onSuccess: async () => {
+    onSuccess: async (_data, tagId) => {
       setLocalError(null);
       setAddId("");
       await queryClient.invalidateQueries({
         queryKey: ["quote-tags", quoteId],
       });
+      const tagName =
+        allTagsQuery.data?.items.find((t) => t.id === tagId)?.name;
+      toast.success(
+        tagName
+          ? `Tag "${tagName}" added to "${quoteTitle}"`
+          : `Tag added to "${quoteTitle}"`
+      );
     },
     onError: (err) => {
       if (err instanceof ApiError) {
@@ -951,11 +969,17 @@ function QuoteTagsEditorRow({
 
   const removeMutation = useMutation({
     mutationFn: (tagId: string) => removeTagFromQuote(quoteId, tagId),
-    onSuccess: async () => {
+    onSuccess: async (_data, tagId) => {
       setLocalError(null);
       await queryClient.invalidateQueries({
         queryKey: ["quote-tags", quoteId],
       });
+      const tagName = current.find((t) => t.id === tagId)?.name;
+      toast.success(
+        tagName
+          ? `Tag "${tagName}" removed from "${quoteTitle}"`
+          : `Tag removed from "${quoteTitle}"`
+      );
     },
     onError: (err) => {
       setLocalError(err instanceof ApiError ? err.message : String(err));

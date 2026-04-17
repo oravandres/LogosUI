@@ -3,6 +3,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/api/client";
+import { ToastProvider } from "@/components/ToastProvider";
 import { CategoriesPage } from "./CategoriesPage";
 
 const listCategoriesMock = vi.fn();
@@ -27,7 +28,9 @@ function renderPage() {
   });
   return render(
     <QueryClientProvider client={client}>
-      <CategoriesPage />
+      <ToastProvider>
+        <CategoriesPage />
+      </ToastProvider>
     </QueryClientProvider>
   );
 }
@@ -119,5 +122,41 @@ describe("CategoriesPage inline edit", () => {
     );
     await screen.findByText("Category is locked");
     expect(updateCategoryMock).toHaveBeenCalled();
+  });
+
+  it("emits a success toast when create succeeds", async () => {
+    createCategoryMock.mockResolvedValueOnce({
+      id: "cat-2",
+      name: "Gamma",
+      type: "quote",
+      created_at: "2020-01-01T00:00:00.000Z",
+    });
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText("Alpha");
+    const nameField = screen.getByRole("textbox", { name: /^name$/i });
+    await user.type(nameField, "Gamma");
+    await user.click(screen.getByRole("button", { name: /^create$/i }));
+    await screen.findByText(/Category "Gamma" created/);
+  });
+
+  it("emits an error toast when update fails (alongside the inline banner)", async () => {
+    updateCategoryMock.mockRejectedValueOnce(
+      new ApiError("Category is locked", 500, {})
+    );
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText("Alpha");
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+    const nameField = screen.getByRole("textbox", { name: /name — alpha/i });
+    await user.clear(nameField);
+    await user.type(nameField, "Beta");
+    await user.click(
+      screen.getByRole("button", { name: /save changes for category alpha/i })
+    );
+    const errorRegion = await screen.findByRole("alert", { name: /errors/i });
+    expect(errorRegion).toHaveTextContent(
+      /Could not update category: Category is locked/
+    );
   });
 });

@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/api/client";
+import { ToastProvider } from "@/components/ToastProvider";
 import { QuoteDetailPage } from "./QuoteDetailPage";
 
 const getQuoteMock = vi.fn();
@@ -49,12 +50,14 @@ function renderAt(
 ): { container: HTMLElement } {
   return render(
     <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={[path]}>
-        <Routes>
-          <Route path="/quotes" element={<div>quotes-list-stub</div>} />
-          <Route path="/quotes/:id" element={<QuoteDetailPage />} />
-        </Routes>
-      </MemoryRouter>
+      <ToastProvider>
+        <MemoryRouter initialEntries={[path]}>
+          <Routes>
+            <Route path="/quotes" element={<div>quotes-list-stub</div>} />
+            <Route path="/quotes/:id" element={<QuoteDetailPage />} />
+          </Routes>
+        </MemoryRouter>
+      </ToastProvider>
     </QueryClientProvider>
   );
 }
@@ -298,8 +301,11 @@ describe("QuoteDetailPage", () => {
 
     renderAt("/quotes/q-1");
 
+    // Multiple alert regions exist (inline error + toast errors region); the
+    // inline page error is the one that carries the message verbatim.
     await waitFor(() => {
-      expect(screen.getByRole("alert")).toHaveTextContent("boom");
+      const alerts = screen.getAllByRole("alert");
+      expect(alerts.some((el) => el.textContent === "boom")).toBe(true);
     });
   });
 

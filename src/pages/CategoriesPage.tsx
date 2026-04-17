@@ -16,6 +16,7 @@ import {
   updateCategory,
 } from "@/api/categories";
 import type { CategoryWriteBody } from "@/api/types";
+import { useToast } from "@/components/useToast";
 
 const TYPE_OPTIONS: { value: CategoryTypeFilter; label: string }[] = [
   { value: "", label: "All types" },
@@ -44,6 +45,7 @@ type UpdateCategoryVars = {
 
 export function CategoriesPage() {
   const queryClient = useQueryClient();
+  const toast = useToast();
   const [typeFilter, setTypeFilter] = useState<CategoryTypeFilter>("");
   const [offset, setOffset] = useState(0);
 
@@ -65,26 +67,30 @@ export function CategoriesPage() {
 
   const createMutation = useMutation({
     mutationFn: (body: CategoryWriteBody) => createCategory(body),
-    onSuccess: async () => {
+    onSuccess: async (_data, vars) => {
       await queryClient.invalidateQueries({ queryKey: ["categories"] });
       setFormName("");
       setFormError(null);
+      toast.success(`Category "${vars.name}" created`);
     },
     onError: (err) => {
       setFormError(err instanceof ApiError ? err.message : String(err));
+      toast.error("Could not create category", err);
     },
   });
 
   const updateMutation = useMutation({
     mutationFn: ({ id, body }: UpdateCategoryVars) =>
       updateCategory(id, body),
-    onSuccess: async () => {
+    onSuccess: async (_data, vars) => {
       await queryClient.invalidateQueries({ queryKey: ["categories"] });
       setEditingId(null);
       setEditError(null);
+      toast.success(`Category "${vars.body.name}" updated`);
     },
     onError: (err) => {
       setEditError(err instanceof ApiError ? err.message : String(err));
+      toast.error("Could not update category", err);
     },
   });
 
@@ -105,6 +111,10 @@ export function CategoriesPage() {
         });
       }
       await queryClient.invalidateQueries({ queryKey: ["categories"] });
+      toast.success("Category deleted");
+    },
+    onError: (err) => {
+      toast.error("Could not delete category", err);
     },
   });
 

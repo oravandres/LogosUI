@@ -23,6 +23,7 @@ import {
 import { listAllCategoriesByType } from "@/api/categories";
 import { getImage, listImages } from "@/api/images";
 import type { AuthorWriteBody } from "@/api/types";
+import { useToast } from "@/components/useToast";
 
 const SEARCH_DEBOUNCE_MS = 400;
 
@@ -44,6 +45,7 @@ type UpdateAuthorVars = {
 
 export function AuthorsPage() {
   const queryClient = useQueryClient();
+  const toast = useToast();
   const [categoryFilterId, setCategoryFilterId] = useState("");
   const [searchInput, setSearchInput] = useState("");
   const [appliedSearch, setAppliedSearch] = useState("");
@@ -117,7 +119,7 @@ export function AuthorsPage() {
 
   const createMutation = useMutation({
     mutationFn: (body: AuthorWriteBody) => createAuthor(body),
-    onSuccess: async () => {
+    onSuccess: async (_data, vars) => {
       await queryClient.invalidateQueries({ queryKey: ["authors"] });
       setFormName("");
       setFormBio("");
@@ -126,21 +128,25 @@ export function AuthorsPage() {
       setFormImageId("");
       setFormCategoryId("");
       setFormError(null);
+      toast.success(`Author "${vars.name}" created`);
     },
     onError: (err) => {
       setFormError(err instanceof ApiError ? err.message : String(err));
+      toast.error("Could not create author", err);
     },
   });
 
   const updateMutation = useMutation({
     mutationFn: ({ id, body }: UpdateAuthorVars) => updateAuthor(id, body),
-    onSuccess: async () => {
+    onSuccess: async (_data, vars) => {
       await queryClient.invalidateQueries({ queryKey: ["authors"] });
       setEditingId(null);
       setEditError(null);
+      toast.success(`Author "${vars.body.name}" updated`);
     },
     onError: (err) => {
       setEditError(err instanceof ApiError ? err.message : String(err));
+      toast.error("Could not update author", err);
     },
   });
 
@@ -159,6 +165,10 @@ export function AuthorsPage() {
         });
       }
       await queryClient.invalidateQueries({ queryKey: ["authors"] });
+      toast.success("Author deleted");
+    },
+    onError: (err) => {
+      toast.error("Could not delete author", err);
     },
   });
 
