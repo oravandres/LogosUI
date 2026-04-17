@@ -110,13 +110,15 @@ function ToastRegion({
   toasts: Toast[];
   onDismiss: (id: string) => void;
 }) {
-  // Two regions so screen readers announce errors assertively without
-  // interrupting success/info messages.
+  // Two live regions so screen readers announce errors assertively without
+  // interrupting success/info messages. Both lists sit inside a single
+  // positioned stack so mixed-variant toasts flow-layout underneath each
+  // other instead of both claiming the same fixed corner slot.
   const polite = toasts.filter((t) => t.variant !== "error");
   const assertive = toasts.filter((t) => t.variant === "error");
 
   return (
-    <>
+    <div className="toast-stack">
       <ToastList
         toasts={polite}
         onDismiss={onDismiss}
@@ -131,7 +133,7 @@ function ToastRegion({
         role="alert"
         label="Errors"
       />
-    </>
+    </div>
   );
 }
 

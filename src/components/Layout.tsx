@@ -1,8 +1,14 @@
-import { NavLink, Outlet } from "react-router";
+import { NavLink, Outlet, useLocation } from "react-router";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { ToastProvider } from "@/components/ToastProvider";
 
 export function Layout() {
+  // Key the error boundary by the current location so navigating to a
+  // different route (or back to the same route via a fresh entry) remounts
+  // it and clears any prior caught error. Without this, a single broken
+  // page would trap the whole app behind the fallback since Layout itself
+  // stays mounted across client-side navigations.
+  const location = useLocation();
   return (
     <ToastProvider>
       <div className="app">
@@ -30,7 +36,7 @@ export function Layout() {
           </nav>
         </header>
         <main className="app-main">
-          <ErrorBoundary>
+          <ErrorBoundary key={location.key}>
             <Outlet />
           </ErrorBoundary>
         </main>

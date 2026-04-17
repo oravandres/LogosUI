@@ -847,19 +847,30 @@ code.wrap {
 
 /* ── Toasts ── */
 
-.toast-list {
+.toast-stack {
   position: fixed;
   bottom: 1.25rem;
   right: 1.25rem;
   z-index: 100;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  max-width: min(24rem, calc(100vw - 2.5rem));
+  pointer-events: none;
+}
+
+.toast-list {
   list-style: none;
   margin: 0;
   padding: 0;
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
-  max-width: min(24rem, calc(100vw - 2.5rem));
   pointer-events: none;
+}
+
+.toast-list:empty {
+  display: none;
 }
 
 .toast {

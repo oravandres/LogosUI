@@ -105,6 +105,19 @@ describe("ToastProvider", () => {
     expect(screen.queryByText("Saved")).not.toBeInTheDocument();
   });
 
+  it("renders the polite and assertive lists inside one positioned stack so they don't overlap", () => {
+    const api = renderWithToasts();
+    act(() => {
+      api.success("ok");
+      api.error("boom");
+    });
+    const polite = screen.getByRole("status", { name: /notifications/i });
+    const assertive = screen.getByRole("alert", { name: /errors/i });
+    expect(polite.parentElement).not.toBeNull();
+    expect(polite.parentElement).toBe(assertive.parentElement);
+    expect(polite.parentElement).toHaveClass("toast-stack");
+  });
+
   it("caps visible toasts to four (oldest is dropped)", () => {
     const api = renderWithToasts();
     act(() => {
