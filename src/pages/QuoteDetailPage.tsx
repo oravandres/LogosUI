@@ -7,6 +7,7 @@ import { getImage } from "@/api/images";
 import { deleteQuote, getQuote } from "@/api/quotes";
 import { listQuoteTags } from "@/api/tags";
 import type { Author, Category, Image, Quote, Tag } from "@/api/types";
+import { useToast } from "@/components/useToast";
 
 /**
  * Read-oriented page for a single quote at `/quotes/:id`.
@@ -26,6 +27,7 @@ export function QuoteDetailPage() {
   const { id = "" } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const toast = useToast();
 
   const quoteQuery = useQuery({
     queryKey: ["quote", id],
@@ -85,7 +87,12 @@ export function QuoteDetailPage() {
       await queryClient.invalidateQueries({ queryKey: ["home"] });
       queryClient.removeQueries({ queryKey: ["quote", id] });
       queryClient.removeQueries({ queryKey: ["quote-tags", id] });
+      const title = quote?.title;
       navigate("/quotes");
+      toast.success(title ? `Quote "${title}" deleted` : "Quote deleted");
+    },
+    onError: (err) => {
+      toast.error("Could not delete quote", err);
     },
   });
 

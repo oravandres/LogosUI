@@ -16,6 +16,7 @@ import {
   updateImage,
 } from "@/api/images";
 import type { ImageWriteBody } from "@/api/types";
+import { useToast } from "@/components/useToast";
 import { safeHttpHref } from "@/url/safeHttpUrl";
 
 type DeleteImageVars = {
@@ -32,6 +33,7 @@ type UpdateImageVars = {
 
 export function ImagesPage() {
   const queryClient = useQueryClient();
+  const toast = useToast();
   const [categoryFilterId, setCategoryFilterId] = useState("");
   const [offset, setOffset] = useState(0);
 
@@ -66,9 +68,11 @@ export function ImagesPage() {
       setFormAlt("");
       setFormCategoryId("");
       setFormError(null);
+      toast.success("Image registered");
     },
     onError: (err) => {
       setFormError(err instanceof ApiError ? err.message : String(err));
+      toast.error("Could not register image", err);
     },
   });
 
@@ -78,9 +82,11 @@ export function ImagesPage() {
       await queryClient.invalidateQueries({ queryKey: ["images"] });
       setEditingId(null);
       setEditError(null);
+      toast.success("Image updated");
     },
     onError: (err) => {
       setEditError(err instanceof ApiError ? err.message : String(err));
+      toast.error("Could not update image", err);
     },
   });
 
@@ -98,6 +104,10 @@ export function ImagesPage() {
         });
       }
       await queryClient.invalidateQueries({ queryKey: ["images"] });
+      toast.success("Image deleted");
+    },
+    onError: (err) => {
+      toast.error("Could not delete image", err);
     },
   });
 

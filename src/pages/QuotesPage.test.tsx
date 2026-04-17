@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/api/client";
+import { ToastProvider } from "@/components/ToastProvider";
 import { QuotesPage } from "./QuotesPage";
 
 const listQuotesMock = vi.fn();
@@ -59,9 +60,11 @@ function renderPage() {
   });
   return render(
     <QueryClientProvider client={client}>
-      <MemoryRouter>
-        <QuotesPage />
-      </MemoryRouter>
+      <ToastProvider>
+        <MemoryRouter>
+          <QuotesPage />
+        </MemoryRouter>
+      </ToastProvider>
     </QueryClientProvider>
   );
 }

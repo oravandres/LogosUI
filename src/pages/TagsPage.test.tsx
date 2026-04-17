@@ -3,6 +3,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/api/client";
+import { ToastProvider } from "@/components/ToastProvider";
 import { TagsPage } from "./TagsPage";
 
 const listTagsMock = vi.fn();
@@ -25,7 +26,9 @@ function renderPage() {
   });
   return render(
     <QueryClientProvider client={client}>
-      <TagsPage />
+      <ToastProvider>
+        <TagsPage />
+      </ToastProvider>
     </QueryClientProvider>
   );
 }

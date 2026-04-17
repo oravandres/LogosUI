@@ -73,11 +73,23 @@ Split out of Phase B because each requires plumbing that does not yet exist:
 
 ### Phase C — Global polish _(medium)_
 
+Sliced into three independently-shippable PRs. C.1 is done; C.2 and C.3 are next.
+
+#### ~~C.1 — Router error boundary + toasts~~ _(shipped)_
+
+- `<ErrorBoundary>` (class component) wraps the routed `<Outlet />` inside `Layout`, so a thrown render error in any page shows a friendly fallback while the header/nav stay rendered. The raw error message is **not** surfaced to the user (no internal leakage); it is logged via `console.error("[ui] render error", { name, message, componentStack })` for future RUM wiring.
+- `<ToastProvider>` (in `Layout`) plus `useToast()` (`src/components/useToast.ts`) expose `success` / `info` / `error(msg, err?)` / `dismiss`. Two live regions are rendered: `role="status" aria-live="polite"` for success/info, `role="alert" aria-live="assertive"` for errors. Toasts auto-dismiss (4s success/info, 7s error), are capped at 4 visible (oldest dropped), and respect `prefers-reduced-motion`.
+- Every `useMutation` across the six pages now toasts: `success("Quote \"…\" created")` etc. on success, and `error("Could not create quote", err)` on failure (alongside the existing inline banner — the toast is additive, the banner is not removed).
+- Tests: `ErrorBoundary.test.tsx` (4) + `ToastProvider.test.tsx` (7) + integration assertions in `CategoriesPage.test.tsx`. Total suite: 94/94 passing.
+
+#### C.2 — Skeleton loaders + empty-state CTAs _(next)_
+
 - **Skeleton loaders** on list pages and the home dashboard instead of "Loading…" strings.
 - **Empty-state CTAs** on every list page ("No quotes yet — create one"), not only on the home page.
-- **Toasts or inline banners** for successful create/update/delete mutations (replace silent success).
+
+#### C.3 — Dark mode
+
 - **Dark mode** via `prefers-color-scheme` with a CSS custom property palette (no runtime toggle in v1).
-- **Error boundary** at the router level so a thrown render error shows a friendly fallback.
 
 ### Phase D — Observability _(small)_
 

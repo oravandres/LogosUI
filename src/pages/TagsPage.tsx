@@ -14,6 +14,7 @@ import {
   listTags,
 } from "@/api/tags";
 import type { TagWriteBody } from "@/api/types";
+import { useToast } from "@/components/useToast";
 
 type DeleteTagVars = {
   id: string;
@@ -23,6 +24,7 @@ type DeleteTagVars = {
 
 export function TagsPage() {
   const queryClient = useQueryClient();
+  const toast = useToast();
   const [offset, setOffset] = useState(0);
 
   // Latest list navigation; used to avoid clamping offset after the user
@@ -39,14 +41,16 @@ export function TagsPage() {
 
   const createMutation = useMutation({
     mutationFn: (body: TagWriteBody) => createTag(body),
-    onSuccess: async () => {
+    onSuccess: async (_data, vars) => {
       setFormName("");
       setFormError(null);
       // Invalidate both the admin list and any cached per-quote pickers.
       await queryClient.invalidateQueries({ queryKey: ["tags"] });
+      toast.success(`Tag "${vars.name}" created`);
     },
     onError: (err) => {
       setFormError(err instanceof ApiError ? err.message : String(err));
+      toast.error("Could not create tag", err);
     },
   });
 
@@ -64,6 +68,10 @@ export function TagsPage() {
       // Tag delete cascades to quote_tags; per-quote tag lists must refresh.
       await queryClient.invalidateQueries({ queryKey: ["tags"] });
       await queryClient.invalidateQueries({ queryKey: ["quote-tags"] });
+      toast.success("Tag deleted");
+    },
+    onError: (err) => {
+      toast.error("Could not delete tag", err);
     },
   });
 
