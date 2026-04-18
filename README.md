@@ -65,7 +65,7 @@ ghcr.io/oravandres/logosui/logos-ui:<short-sha>
 
 ## Deployment
 
-The cluster manifests for the `logos-ui` namespace and the shared ingress with `logos-api` live in the [MiMi](https://github.com/oravandres/MiMi) repo. In production the UI and the API share an origin (`https://logos.mimi.local`), so the browser never issues a CORS preflight; `CORS_ALLOWED_ORIGINS` on the API only covers local dev (typically `http://localhost:5173`). Do not widen it to bake the prod origin in — that would silently re-introduce a same-origin assumption violation.
+The cluster manifests for the `logos-ui` namespace live in the [MiMi](https://github.com/oravandres/MiMi) repo under `manifests/logos-ui/`. The UI ships a sibling `Ingress` on the shared `logos.mimi.local` host, alongside `manifests/logos/ingress.yaml` which continues to own `/api/v1` for `logos-api`; Traefik picks the longer path prefix, so `/api/v1` lands on the API and everything else falls through to the SPA. Each namespace owns its own Ingress (and its own `*-tls` Secret, since Secrets cannot cross namespaces; both certs are issued by the same internal CA so Traefik is happy to serve either for SNI). In production the UI and the API therefore share an origin (`https://logos.mimi.local`), so the browser never issues a CORS preflight; `CORS_ALLOWED_ORIGINS` on the API only covers local dev (typically `http://localhost:5173`). Do not widen it to bake the prod origin in — that would silently re-introduce a same-origin assumption violation.
 
 ## CI
 
