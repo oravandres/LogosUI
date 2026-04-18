@@ -24,8 +24,8 @@ This document tracks what is done, what is next, and how we get the UI deployed 
 
 What is **not** shipped:
 
-- No production deployment — no Dockerfile, no CI, no cluster manifests.
-- No global search, no dark mode, no skeleton loaders.
+- No cluster manifests yet — the image builds and the CI/CD pipeline is wired up (Section 4.1 + 4.2 below), but the MiMi-side `manifests/logos-ui/`, the shared ingress change, and the Argo CD `Application` (Sections 4.3–4.6) are still to do.
+- No global search.
 
 ---
 
@@ -126,51 +126,23 @@ Sliced into three independently-shippable PRs. All three landed.
 
 Right now the backend lives at `https://logos.mimi.local/api/v1`. The UI is not deployed at all. The plan is to co-host the UI on the **same host** as the API so the browser treats API calls as same-origin — which eliminates the CORS surface in production entirely.
 
-### 4.1 Containerization
+### ~~4.1 Containerization~~ _(shipped)_
 
-Add a `Dockerfile` to this repo (similar shape to `Logos/Dockerfile`):
+- `Dockerfile` (multi-stage): `node:22.12-alpine` builder runs `npm ci` then `npm run build` with `VITE_LOGOS_API_BASE_URL` baked in via `ARG` (default `https://logos.mimi.local`); runtime is `nginxinc/nginx-unprivileged:1.29.4-alpine` listening on `8080` as UID 101 (compatible with the cluster's `restricted` PodSecurity baseline). Builder is pinned to `--platform=$BUILDPLATFORM` because the static bundle is architecture-independent — only the nginx layer needs to be multi-arch.
+- `deploy/nginx.conf` ships three matching locations and the canonical SPA-server safety rules:
+  - `^~ /assets/` → `Cache-Control: public, max-age=31536000, immutable`, and `try_files $uri =404` so a renamed chunk after a deploy surfaces as a 404 instead of falling through to the HTML shell (which would then fail to parse as JS).
+  - `/favicon.ico` and `/robots.txt` → `Cache-Control: public, max-age=3600` (never `immutable`; filenames are not hashed).
+  - `/` → `try_files $uri /index.html`, `Cache-Control: no-store`. Deep links resolve in the browser.
+  - `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer` are repeated in **every** location because nginx's `add_header` is not inherited from a parent block when the child block defines any `add_header` directive of its own. (Caught during local smoke testing — easy to regress.)
+- `.dockerignore` strips `node_modules`, `dist`, `.git`, `.github`, `.cursor`, `.env*` (except `.env.example`), `PLAN.md`, `README.md`, `AGENTS.md`, and IDE/OS junk.
+- Verified locally: `docker build` succeeds (lint, `tsc -b`, `vite build`, nginx packaging — all clean inside the container); the running container serves the SPA on `:8080`, deep links resolve via the SPA fallback, hashed assets ship a single `Cache-Control: immutable` header, the security headers appear on every response, and the process runs as `uid=101(nginx)`. Image size: ~82 MB.
 
-```dockerfile
-# Build stage
-FROM node:22-alpine AS builder
-WORKDIR /src
-COPY package.json package-lock.json ./
-RUN npm ci --no-audit --no-fund
-COPY . .
-ARG VITE_LOGOS_API_BASE_URL=https://logos.mimi.local
-ENV VITE_LOGOS_API_BASE_URL=${VITE_LOGOS_API_BASE_URL}
-RUN npm run build
+### ~~4.2 CI + GHCR multi-arch publish~~ _(shipped)_
 
-# Runtime stage — unprivileged nginx serving the static bundle
-FROM nginxinc/nginx-unprivileged:1.27-alpine
-COPY --from=builder /src/dist /usr/share/nginx/html
-COPY deploy/nginx.conf /etc/nginx/conf.d/default.conf
-EXPOSE 8080
-```
-
-Key points:
-
-- Use `nginxinc/nginx-unprivileged` so the container runs as non-root out of the box — compatible with the `logos-ui` namespace's `pod-security.kubernetes.io/enforce: restricted` label.
-- Bake `VITE_LOGOS_API_BASE_URL=https://logos.mimi.local` at build time so the bundle points at the same host it's served from. (Vite already fails the build if the env is missing.)
-- Ship an `nginx.conf` with two rules:
-  1. Hashed asset files (`/assets/*`) → `Cache-Control: public, max-age=31536000, immutable`.
-  2. `index.html` and the SPA fallback (`try_files $uri /index.html`) → `Cache-Control: no-store` so users never get stranded on a stale chunk graph after a deploy (this is in `AGENTS.md`).
-
-### 4.2 GitHub Actions — multi-arch build + GHCR push
-
-Add `.github/workflows/docker.yml` mirroring the Logos pattern:
-
-- Triggers: `push` to `main`.
-- `setup-qemu-action` + `setup-buildx-action`.
-- Login to `ghcr.io` with `secrets.GITHUB_TOKEN` and `packages: write` permission.
-- Tag with short git SHA via `docker/metadata-action`.
-- `platforms: linux/amd64,linux/arm64` — the MiMi cluster mixes Raspberry Pi arm64 with amd64 nodes, so a single-platform tag will fail rollouts (see `rules/12-pr-review-lessons.mdc`).
+- A single `.github/workflows/ci.yml` covers both validation and publish so the GHCR image is always gated on a passing build of the same commit. Triggers on `pull_request` and `push: main`.
+  - Job `test-and-build`: pins Node via `.nvmrc` (currently `22`), uses `actions/setup-node@v4` with `cache: npm`, then runs `npm ci` → `npm run lint` → `npm test` → `npm run build` (with `VITE_LOGOS_API_BASE_URL=https://logos.mimi.local`). `npm run build` is `tsc -b && vite build`, so it covers both tsconfig projects (app + node) for typecheck.
+  - Job `container` (`needs: test-and-build`): always builds the image for `linux/amd64` with `--load` and runs a real smoke test against the running container — non-root UID 101, `index.html` cache + security headers, SPA fallback for deep links, exactly one `Cache-Control: immutable` line on hashed assets, and `/assets/missing.js` returning 404 (no fallthrough to the HTML shell). The smoke test catches Dockerfile / nginx regressions at PR time. On `push: main` the same job then builds multi-arch (`linux/amd64,linux/arm64`) and pushes to GHCR using `docker/login-action@v3` with `${{ secrets.GITHUB_TOKEN }}` and a short-SHA tag from `docker/metadata-action@v5`. Multi-arch is mandatory because the cluster mixes amd64 with Raspberry Pi arm64 nodes; a single-platform tag would fail rollouts on arm64 with `no match for platform in manifest` (workspace rule `12-pr-review-lessons.mdc`). buildx `cache-from`/`cache-to: type=gha` keeps the second build incremental.
 - Image repo: `ghcr.io/oravandres/logosui/logos-ui`.
-
-Also add a lightweight `.github/workflows/ci.yml`:
-
-- `npm ci`, `npm run lint`, `tsc --noEmit` (both app and node configs), `npm test`.
-- `npm run build` with `VITE_LOGOS_API_BASE_URL` set to a placeholder so the build gate catches type / import regressions.
 
 ### 4.3 MiMi manifests — new `logos-ui` namespace
 
@@ -230,9 +202,9 @@ Add `manifests/argocd-apps/logos-ui-app.yaml` mirroring `logos-app.yaml`:
 
 ### 4.7 Rollout sequence
 
-1. Merge this plan doc + scaffolding PR.
-2. PR: add `Dockerfile`, `deploy/nginx.conf`, `.github/workflows/{ci,docker}.yml`. CI validates on every push; the first `main` push after merge publishes `ghcr.io/oravandres/logosui/logos-ui:<sha>`.
-3. PR to MiMi: add `manifests/logos-ui/*` with `image: ghcr.io/oravandres/logosui/logos-ui:<sha>` pinned to the just-built SHA. Extend `manifests/logos/ingress.yaml`. Add `manifests/argocd-apps/logos-ui-app.yaml`.
+1. ~~Merge this plan doc + scaffolding PR.~~ _(shipped: Phases A–C, plan doc on `main`.)_
+2. ~~PR: add `Dockerfile`, `deploy/nginx.conf`, `.github/workflows/{ci,docker}.yml`. CI validates on every push; the first `main` push after merge publishes `ghcr.io/oravandres/logosui/logos-ui:<sha>`.~~ _(shipped on this branch.)_
+3. **Next:** PR to MiMi: add `manifests/logos-ui/*` with `image: ghcr.io/oravandres/logosui/logos-ui:<sha>` pinned to the SHA published by the first GHCR build after step 2 merges. Extend `manifests/logos/ingress.yaml` (or add a sibling ingress in `manifests/logos-ui/`). Add `manifests/argocd-apps/logos-ui-app.yaml`.
 4. Verify: `https://logos.mimi.local/` loads the SPA; `https://logos.mimi.local/api/v1/health` still returns `{"status":"healthy"}`; deep links (`/quotes`, `/authors/...`) resolve via the SPA fallback.
 5. Version bumps afterwards are single-line image tag changes in MiMi, driven by GHCR builds from this repo.
 
