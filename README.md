@@ -69,4 +69,7 @@ The cluster manifests for the `logos-ui` namespace and the shared ingress with `
 
 ## CI
 
-GitHub Actions runs lint, tests, and a production build on every PR and push to `main` (`.github/workflows/ci.yml`). A separate workflow (`.github/workflows/docker.yml`) builds and pushes the multi-arch image to GHCR on `main`.
+GitHub Actions runs a single `.github/workflows/ci.yml` on every PR and push to `main`, with two jobs:
+
+- **`test-and-build`** — `npm ci`, `npm run lint`, `npm test`, `npm run build` (which is `tsc -b && vite build`, so it also typechecks both tsconfig projects).
+- **`container`** (`needs: test-and-build`) — builds the image for `linux/amd64` with `--load` and runs a smoke test against the running container (non-root UID 101, cache headers on `index.html` and hashed assets, SPA deep-link fallback, `/assets/missing.js` returning 404). On `push: main` only, the same job then builds multi-arch (`linux/amd64,linux/arm64`) and pushes to `ghcr.io/oravandres/logosui/logos-ui:<short-sha>`. The publish step is unreachable unless `test-and-build` and the smoke test pass on the same commit.
