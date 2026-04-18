@@ -6,13 +6,13 @@ on:
     branches:
       - main
 
+# Default to the least permissive set; the container job widens for GHCR.
 permissions:
   contents: read
 
 jobs:
   test-and-build:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -32,12 +32,125 @@ jobs:
       - name: Test
         run: npm test
 
-      # `npm run build` is `tsc -b && vite build`, so this also typechecks both
-      # tsconfig projects (app + node). VITE_LOGOS_API_BASE_URL is required by
-      # vite.config.ts in production mode; using a placeholder here just
-      # exercises the build path — the published image rebuilds with the real
-      # cluster URL via `docker.yml`.
+      # `npm run build` is `tsc -b && vite build`, so this also typechecks
+      # both tsconfig projects (app + node). VITE_LOGOS_API_BASE_URL is
+      # required by vite.config.ts in production mode; using the cluster URL
+      # here matches what `container` will bake into the published image.
       - name: Build
         env:
           VITE_LOGOS_API_BASE_URL: https://logos.mimi.local
         run: npm run build
+
+  # Builds (and on `push: main`, publishes) the container image. Depends on
+  # `test-and-build` so a merge commit that fails lint/tests/build never
+  # reaches `docker push`. Always runs the build + smoke test so PR CI
+  # exercises the Dockerfile and nginx config that ship with the bundle.
+  container:
+    needs: test-and-build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          # Mirrors the Logos pattern: ghcr.io/<owner>/<repo-namespace>/<image>.
+          images: ghcr.io/${{ github.repository_owner }}/logosui/logos-ui
+          tags: |
+            type=sha,prefix=,format=short
+
+      # Build amd64 and load it into the runner's docker so we can boot the
+      # actual published artifact and assert behaviour. On `push: main` this
+      # also primes the buildx layer cache for the multi-arch publish step
+      # below, so the second build only adds the arm64 cross-compile.
+      - name: Build (amd64) for smoke test
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          platforms: linux/amd64
+          build-args: |
+            VITE_LOGOS_API_BASE_URL=https://logos.mimi.local
+          tags: logos-ui:ci-smoke
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test the container
+        run: |
+          set -euo pipefail
+
+          docker run --rm -d --name logos-ui-smoke -p 18080:8080 logos-ui:ci-smoke
+
+          # Wait for nginx to come up (worst case ~10s).
+          for _ in 1 2 3 4 5 6 7 8 9 10; do
+            if curl -fsS -o /dev/null http://127.0.0.1:18080/; then break; fi
+            sleep 1
+          done
+
+          echo "--- runs as non-root (UID 101) ---"
+          test "$(docker exec logos-ui-smoke id -u)" = "101"
+
+          echo "--- index.html: cache + security headers ---"
+          curl -sSI http://127.0.0.1:18080/ | tee /tmp/idx
+          grep -qi '^Cache-Control: no-store' /tmp/idx
+          grep -qi '^X-Content-Type-Options: nosniff' /tmp/idx
+          grep -qi '^X-Frame-Options: DENY' /tmp/idx
+          grep -qi '^Referrer-Policy: no-referrer' /tmp/idx
+
+          echo "--- SPA fallback resolves deep links ---"
+          curl -sS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:18080/quotes/abc | grep -qE '^200$'
+
+          echo "--- hashed asset: immutable cache + security headers ---"
+          ASSET=$(curl -s http://127.0.0.1:18080/ | grep -oE '/assets/index-[A-Za-z0-9_-]+\.js' | head -1)
+          test -n "$ASSET"
+          curl -sSI "http://127.0.0.1:18080$ASSET" | tee /tmp/asset
+          grep -qi '^Cache-Control: public, max-age=31536000, immutable' /tmp/asset
+          # Exactly one Cache-Control line — guards the `expires` vs `add_header` regression.
+          test "$(grep -ci '^Cache-Control:' /tmp/asset)" = "1"
+          grep -qi '^X-Content-Type-Options: nosniff' /tmp/asset
+          grep -qi '^X-Frame-Options: DENY' /tmp/asset
+          grep -qi '^Referrer-Policy: no-referrer' /tmp/asset
+
+          echo "--- asset 404 does NOT fall through to index.html ---"
+          curl -sS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:18080/assets/missing.js | grep -qE '^404$'
+
+          docker rm -f logos-ui-smoke
+
+      # Multi-arch is mandatory: the MiMi cluster mixes amd64 nodes with
+      # Raspberry Pi arm64 nodes. A single-platform tag would fail rollouts
+      # on arm64 with `no match for platform in manifest` (workspace rule
+      # 12-pr-review-lessons). Only runs after smoke test passes on the
+      # merge commit.
+      - name: Build and push (multi-arch)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64,linux/arm64
+          build-args: |
+            VITE_LOGOS_API_BASE_URL=https://logos.mimi.local
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
