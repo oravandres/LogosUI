@@ -18,14 +18,43 @@ export function getApiBaseUrl(): string {
   );
 }
 
+/**
+ * Optional metadata attached to an `ApiError` for observability. Populated by
+ * `fetchJson` so the global query / mutation error logger can emit a
+ * structured event (`status`, `method`, `path`, `requestId`) without each
+ * call site having to thread the request shape through itself.
+ *
+ * `requestId` is the value of the response's `X-Request-Id` header when the
+ * backend emits one; it is `undefined` when the header is absent. (The UI
+ * does not yet generate a client-side request id — that is deferred until
+ * Logos starts emitting one server-side per Plan §D.)
+ */
+export interface ApiErrorMeta {
+  path?: string;
+  method?: string;
+  requestId?: string;
+}
+
 export class ApiError extends Error {
+  readonly status: number;
+  readonly body: unknown;
+  readonly path?: string;
+  readonly method?: string;
+  readonly requestId?: string;
+
   constructor(
     message: string,
-    readonly status: number,
-    readonly body: unknown
+    status: number,
+    body: unknown,
+    meta: ApiErrorMeta = {}
   ) {
     super(message);
     this.name = "ApiError";
+    this.status = status;
+    this.body = body;
+    this.path = meta.path;
+    this.method = meta.method;
+    this.requestId = meta.requestId;
   }
 }
 
@@ -48,20 +77,36 @@ function errorMessageFromBody(data: unknown, fallback: string): string {
   return fallback;
 }
 
+function readRequestId(headers: Headers): string | undefined {
+  // Header names are case-insensitive per RFC 7230; `Headers.get` already
+  // normalises. Treat empty strings as absent so a misbehaving proxy that
+  // strips the value to "" does not poison the log payload.
+  const raw = headers.get("x-request-id");
+  if (raw === null) return undefined;
+  const trimmed = raw.trim();
+  return trimmed === "" ? undefined : trimmed;
+}
+
 export async function fetchJson<T>(
   path: string,
   init?: RequestInit
 ): Promise<T> {
   const headers = new Headers(init?.headers);
+  const method = (init?.method ?? "GET").toUpperCase();
 
   const res = await fetch(buildUrl(path), { ...init, headers });
+  const requestId = readRequestId(res.headers);
   const text = await res.text();
   let data: unknown;
   if (text.length > 0) {
     try {
       data = JSON.parse(text) as unknown;
     } catch {
-      throw new ApiError("Response is not valid JSON", res.status, text);
+      throw new ApiError("Response is not valid JSON", res.status, text, {
+        path,
+        method,
+        requestId,
+      });
     }
   } else {
     data = undefined;
@@ -71,7 +116,8 @@ export async function fetchJson<T>(
     throw new ApiError(
       errorMessageFromBody(data, res.statusText),
       res.status,
-      data
+      data,
+      { path, method, requestId }
     );
   }
 

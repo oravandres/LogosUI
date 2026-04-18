@@ -18,7 +18,7 @@ This document tracks what is done, what is next, and how we get the UI deployed 
 | `AuthorPicker` | Debounced async combobox, full ARIA keyboard contract (arrow/Home/End/Enter/Escape), display-name resolution |
 | Per-quote tags | Chip display + inline editor with parent-404 / child-422 / read-error handling |
 | Home dashboard | Corpus counts + recent quotes with resolved author names |
-| Tests | Vitest + RTL, 77 tests across 9 suites (all passing at time of writing) |
+| Tests | Vitest + RTL, 131 tests across 18 suites (all passing at time of writing) |
 | Lint / typecheck | ESLint, `tsc --noEmit` clean |
 | Cursor rules | Picker reachability, combobox a11y, sub-resource editor lessons captured in `.cursor/rules/` |
 
@@ -106,10 +106,13 @@ Sliced into three independently-shippable PRs. All three landed.
 - Palette contract regression test in `src/test/palette.test.ts` reads the stylesheet and asserts that (a) `:root` declares `color-scheme: light dark`, (b) a `@media (prefers-color-scheme: dark)` override exists and redefines the load-bearing tokens (`--bg-page`, `--bg-panel`, `--bg-header`, `--text-primary`, `--text-body`, `--text-muted`, `--border-subtle`, `--input-bg`, `--input-text`, `--btn-primary-bg`, `--skeleton-base`), and (c) no component rule carries a raw hex — every color outside the two palette declarations flows through `var(--token)`. Total suite: **113/113 passing**. Lint, `tsc --noEmit`, and `vite build` clean.
 - No markup or component API changed; only `src/index.css` was touched (plus the new palette test). No runtime toggle, no theme provider, no local-storage key, no hydration flash — trivial to revisit later if a user-facing toggle becomes a requirement.
 
-### Phase D — Observability _(small)_
+### ~~Phase D — Observability~~ _(shipped)_
 
-- Structured `console.error` or a tiny logger that includes request path + status for every `ApiError` caught in mutations. No third-party RUM for now.
-- Optional `X-Request-Id` header propagation if the backend starts emitting one (coordinate with Logos first).
+- `src/api/logger.ts` exposes `logApiError(err, ctx)` and `isAbortLike(err)`. Every event is a single structured `console.error("[ui] api error", { source, key, name, message, status, method, path, requestId })` so future RUM wiring can replace the sink without touching call sites. The response body and request payload are deliberately **not** logged — they can carry user-entered text or other PII.
+- `ApiError` now carries optional `path`, `method`, and `requestId` fields populated by `fetchJson`. The constructor signature is backward compatible (`new ApiError(message, status, body, meta?)`), so the existing test fixtures and any direct construction sites keep working.
+- `fetchJson` reads `X-Request-Id` from the response headers (case-insensitive, empty values treated as absent) and threads it onto the thrown `ApiError`. The UI does not yet **send** an outbound `X-Request-Id` header — that is deferred until Logos starts emitting one server-side, per the original "coordinate with Logos first" caveat. When the backend lands the header, the field flows through automatically with no further UI change.
+- `src/api/queryClient.ts` exports `createAppQueryClient()` which wires `QueryCache.onError` (`source: "query"`, `key: queryKey`) and `MutationCache.onError` (`source: "mutation"`, `key: mutationKey`) into `logApiError`. Per-call `onError` callbacks still run for UI behavior (toast, inline banner); this layer is purely for observability. Aborted requests (route changes, debounced supersedes) are skipped silently so navigation does not produce a stream of misleading "errors".
+- Tests: `src/api/logger.test.ts` (8) covers the structured shape, the abort skip, the unknown-error fallback, and a defense-in-depth check that no response-body content leaks into the log payload. `src/api/client.test.ts` (6) covers `ApiError` carrying `path`/`method`/`requestId`, GET defaulting, empty `X-Request-Id` handling, non-JSON failure responses, and that `postJson` still sets `Content-Type: application/json`. `src/api/queryClient.test.ts` (3) covers the cache callbacks for queries and mutations, plus the abort skip path. Total suite: **131/131 passing**. ESLint and `tsc --noEmit` clean across both tsconfig projects.
 
 ### Phase E — Stretch _(future)_
 
