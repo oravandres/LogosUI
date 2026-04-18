@@ -1,0 +1,43 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm test
+
+      # `npm run build` is `tsc -b && vite build`, so this also typechecks both
+      # tsconfig projects (app + node). VITE_LOGOS_API_BASE_URL is required by
+      # vite.config.ts in production mode; using a placeholder here just
+      # exercises the build path — the published image rebuilds with the real
+      # cluster URL via `docker.yml`.
+      - name: Build
+        env:
+          VITE_LOGOS_API_BASE_URL: https://logos.mimi.local
+        run: npm run build
