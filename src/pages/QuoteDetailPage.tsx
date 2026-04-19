@@ -341,6 +341,26 @@ function AuthorBlock({
                   {formatLifeSpan(author.born_date, author.died_date)}
                 </p>
               ) : null}
+              <p className="author-actions">
+                {/*
+                 * The author's name is part of the visible label rather than
+                 * an `aria-label` override. WCAG 2.5.3 (Label in Name)
+                 * requires the accessible name to contain the visible text;
+                 * a static "this author" caption combined with
+                 * `aria-label="… Aristotle"` would diverge for speech-input
+                 * users — they'd say the visible phrase and the
+                 * activate-by-name match would fail. Composing the resolved
+                 * name into the visible text keeps the two in sync and
+                 * makes the link self-describing in the screen-reader rotor
+                 * view as well.
+                 */}
+                <Link
+                  className="link-quiet"
+                  to={listLink({ author_id: author.id })}
+                >
+                  View all quotes by {author.name} →
+                </Link>
+              </p>
             </>
           ) : null}
         </div>
@@ -379,12 +399,34 @@ function TagList({
   return (
     <ul className="tag-chip-list tag-chip-list-readonly">
       {tags.map((t) => (
-        <li key={t.id} className="tag-chip tag-chip-static">
-          {t.name}
+        <li key={t.id}>
+          <Link
+            className="tag-chip tag-chip-link"
+            to={listLink({ tag_id: t.id })}
+            aria-label={`View all quotes tagged "${t.name}"`}
+          >
+            {t.name}
+          </Link>
         </li>
       ))}
     </ul>
   );
+}
+
+/**
+ * Build a deep link into the quotes list with a single filter applied.
+ *
+ * Routes the value through `URLSearchParams` so opaque ids — which are
+ * usually UUIDs but the API treats them as opaque strings — are encoded
+ * defensively. Always points at `/quotes` so the destination is stable
+ * across nested routes.
+ */
+function listLink(params: { author_id?: string; tag_id?: string }): string {
+  const search = new URLSearchParams();
+  if (params.author_id) search.set("author_id", params.author_id);
+  if (params.tag_id) search.set("tag_id", params.tag_id);
+  const qs = search.toString();
+  return qs ? `/quotes?${qs}` : "/quotes";
 }
 
 function QuoteDetailSkeleton() {

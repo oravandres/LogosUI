@@ -29,6 +29,37 @@ Patterns that caused real PR review rounds on LogosUI. Follow these to get PRs r
 
 - **Never** use a server-controlled string as **`<a href>`** without **scheme allowlisting**. Prefer parsing with `URL` and only allow **`http:`** and **`https:`**; render **non-link** text (e.g. `<span>` with `title` for the full value) for `javascript:`, `data:`, or other schemes. Applies to image URLs, file paths exposed as links, etc.
 
+## Accessible name / visible label parity (WCAG 2.5.3)
+
+- **`aria-label` must not override a visible label with a different phrase.** WCAG 2.5.3 (Label in Name) requires the accessible name to **contain** the visible text so speech-input users can activate a control by saying what they see. The anti-pattern that bit us:
+
+  ```tsx
+  // ❌ visible: "View all quotes by this author"
+  // ❌ AT-exposed: "View all quotes by Aristotle"
+  <Link aria-label={`View all quotes by ${author.name}`}>
+    View all quotes by this author →
+  </Link>
+  ```
+
+  Speech input ("click View all quotes by this author") fails because the activate-by-name match runs against the accessible name, which now reads "Aristotle" instead of "this author".
+- **Fix by composing the dynamic value into the visible text**, not by layering an `aria-label` on top:
+
+  ```tsx
+  // ✅ visible == accessible name
+  <Link>View all quotes by {author.name} →</Link>
+  ```
+
+  This also makes the link self-describing in the screen-reader rotor view, where stripped-of-context "View all quotes by this author" was already weak.
+- **`aria-label` is acceptable when the visible text is contained inside it verbatim** — e.g. a chip whose visible text is `wisdom` may carry `aria-label='View all quotes tagged "wisdom"'` because the visible text appears unchanged inside the accessible name. The 2.5.3 violation only fires when the visible text and the accessible name diverge.
+- **Lock this in with a regression test on every link / button whose label is built from a dynamic value.** Assert both shapes:
+
+  ```ts
+  expect(link).not.toHaveAttribute("aria-label");           // no override
+  expect(link.textContent).toMatch(/<dynamic value>/);      // visible carries it
+  ```
+
+  Adding only `screen.findByRole("link", { name: /…/ })` is **not** enough — it matches whether the name comes from visible text or from `aria-label`, so it wouldn't catch a regression that re-introduced the override.
+
 ## Pickers, dropdowns, and large collections
 
 - Do **not** load **unbounded** or **fully paged-through** corpora on mount just to fill a **`<select>`** (e.g. every image in the system). Prefer **lazy** loading: `enabled: false` until a user gesture (**`onFocus`**, button, or combobox open), **bounded** `limit`, or a **search-driven** async control.

@@ -696,6 +696,23 @@ code.wrap {
   padding: 0.05rem 0.5rem;
 }
 
+.tag-chip-link {
+  padding: 0.05rem 0.5rem;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.tag-chip-link:hover,
+.tag-chip-link:focus-visible {
+  background: var(--accent-soft-bg-strong);
+  outline: none;
+}
+
+.tag-chip-link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
 .tag-chip-remove {
   appearance: none;
   border: 0;
@@ -955,6 +972,21 @@ code.wrap {
 .author-dates {
   margin: 0;
   font-size: 0.875rem;
+}
+
+.author-actions {
+  margin: 0.25rem 0 0;
+  font-size: 0.875rem;
+}
+
+.link-quiet {
+  color: var(--accent-soft-text);
+  text-decoration: none;
+}
+
+.link-quiet:hover,
+.link-quiet:focus-visible {
+  text-decoration: underline;
 }
 
 .quote-image {

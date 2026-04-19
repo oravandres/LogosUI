@@ -471,4 +471,161 @@ describe("QuoteDetailPage", () => {
     expect(tagRow).not.toBeNull();
     expect(within(tagRow as HTMLElement).getByText(/^Tags$/)).toBeInTheDocument();
   });
+
+  // Phase B.1b: deep links from the detail page back into the list. The
+  // links exercise the URL-as-source-of-truth contract that QuotesPage now
+  // honors (PR #20), so a click takes the user straight to a filtered list
+  // without any hydration glue.
+  it("renders a 'view all quotes by <author>' deep link whose visible label equals its accessible name (WCAG 2.5.3)", async () => {
+    renderAt("/quotes/q-1");
+    await screen.findByText("On Virtue");
+
+    // The link is announced with the author's name so its purpose is
+    // unambiguous out of context (screen-reader rotor view, search-by-link).
+    const link = await screen.findByRole("link", {
+      name: /View all quotes by Aristotle/i,
+    });
+    // The URL points at the list with only `author_id` set — no stale
+    // filters from the current view leak into the deep link.
+    expect(link).toHaveAttribute("href", "/quotes?author_id=a-1");
+
+    // WCAG 2.5.3 (Label in Name): the visible text must be contained in
+    // the accessible name so speech-input users can activate the link by
+    // saying what they see. We enforce the strongest form of this here —
+    // the link must NOT carry an `aria-label` that overrides the visible
+    // text, and the visible text must include the author name verbatim
+    // (not a generic "this author" caption that would drift from the
+    // accessible name once an aria-label is layered on top).
+    expect(link).not.toHaveAttribute("aria-label");
+    expect(link.textContent).toMatch(/View all quotes by Aristotle/);
+    // The arrow glyph stays a visible affordance, not a piece of the
+    // accessible name we depend on for activation matching.
+    expect(link.textContent).toContain("→");
+  });
+
+  it("does not render the author deep link while the author query is pending", async () => {
+    // Hold the author query in flight so we can observe the pending state.
+    let resolveAuthor!: (value: ReturnType<typeof author>) => void;
+    getAuthorMock.mockImplementationOnce(
+      () =>
+        new Promise<ReturnType<typeof author>>((r) => {
+          resolveAuthor = r;
+        })
+    );
+
+    renderAt("/quotes/q-1");
+    await screen.findByText("On Virtue");
+
+    // The pending author block shows a skeleton; we have no human-readable
+    // name yet, so we deliberately don't render a deep link with a generic
+    // "this author" label that would be useless to a screen-reader user
+    // navigating by links alone.
+    expect(
+      screen.queryByRole("link", { name: /quotes by/i })
+    ).not.toBeInTheDocument();
+
+    resolveAuthor(author());
+    await waitFor(() => {
+      expect(
+        screen.getByRole("link", { name: /View all quotes by Aristotle/i })
+      ).toBeInTheDocument();
+    });
+  });
+
+  it("does not render the author deep link when the author lookup fails", async () => {
+    getAuthorMock.mockRejectedValue(new ApiError("gone", 404, null));
+
+    renderAt("/quotes/q-1");
+    await screen.findByText("On Virtue");
+    await screen.findByText(/Could not load author/i);
+
+    // We hide the deep link in the error state because we don't have the
+    // human-readable name and a generic "this author" label is misleading
+    // when we can't even confirm the author still exists.
+    expect(
+      screen.queryByRole("link", { name: /quotes by/i })
+    ).not.toBeInTheDocument();
+  });
+
+  it("renders each tag chip as a deep link to /quotes?tag_id=…", async () => {
+    listQuoteTagsMock.mockResolvedValue([
+      { id: "t-1", name: "wisdom", created_at: "2020-01-01T00:00:00.000Z" },
+      { id: "t-2", name: "habit", created_at: "2020-01-01T00:00:00.000Z" },
+    ]);
+
+    renderAt("/quotes/q-1");
+    await screen.findByText("On Virtue");
+
+    // Each chip is now a link, announced with its full purpose so a user
+    // navigating by links alone can tell what each chip does.
+    const wisdomLink = await screen.findByRole("link", {
+      name: /View all quotes tagged "wisdom"/i,
+    });
+    expect(wisdomLink).toHaveAttribute("href", "/quotes?tag_id=t-1");
+
+    const habitLink = screen.getByRole("link", {
+      name: /View all quotes tagged "habit"/i,
+    });
+    expect(habitLink).toHaveAttribute("href", "/quotes?tag_id=t-2");
+
+    // The visible chip text remains the bare tag name — no extra glyphs or
+    // ARIA-only-labels swallowed by sighted users.
+    expect(wisdomLink).toHaveTextContent(/^wisdom$/);
+  });
+
+  it("encodes special characters when building tag and author deep links", async () => {
+    // Defense in depth: the API contract treats ids as opaque strings, so
+    // any future id scheme that includes characters with reserved meaning
+    // in URL query strings (`&`, `=`, ` `, …) must round-trip through
+    // `encodeURIComponent` rather than landing in the href as a literal.
+    // Without this guard, an id like `a&b=c` would silently inject a
+    // second filter into the deep link and the destination list would
+    // come up with the wrong rows.
+    getQuoteMock.mockResolvedValue(quote({ author_id: "a&b=c" }));
+    getAuthorMock.mockResolvedValue(
+      author({ id: "a&b=c", name: "A & B = C" })
+    );
+    listQuoteTagsMock.mockResolvedValue([
+      { id: "t 1/2", name: "with space", created_at: "2020-01-01T00:00:00.000Z" },
+    ]);
+
+    renderAt("/quotes/q-1");
+    await screen.findByText("On Virtue");
+
+    const authorLink = await screen.findByRole("link", {
+      name: /View all quotes by A & B = C/i,
+    });
+    expect(authorLink).toHaveAttribute(
+      "href",
+      "/quotes?author_id=a%26b%3Dc"
+    );
+
+    const tagLink = await screen.findByRole("link", {
+      name: /View all quotes tagged "with space"/i,
+    });
+    expect(tagLink).toHaveAttribute("href", "/quotes?tag_id=t+1%2F2");
+  });
+
+  it("navigates to the filtered list when a tag chip is clicked", async () => {
+    // End-to-end proof that the deep link plays nicely with the list-page
+    // route stub: the renderAt helper mounts a `/quotes` route alongside
+    // the detail page, so clicking the tag chip should land us there.
+    listQuoteTagsMock.mockResolvedValue([
+      { id: "t-1", name: "wisdom", created_at: "2020-01-01T00:00:00.000Z" },
+    ]);
+    const user = userEvent.setup();
+
+    renderAt("/quotes/q-1");
+    await screen.findByText("On Virtue");
+
+    await user.click(
+      await screen.findByRole("link", {
+        name: /View all quotes tagged "wisdom"/i,
+      })
+    );
+
+    expect(
+      await screen.findByText("quotes-list-stub")
+    ).toBeInTheDocument();
+  });
 });
