@@ -58,6 +58,44 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * Transport-level failure: the `fetch` promise rejected before any HTTP
+ * response was produced (offline, DNS failure, TLS error, CORS rejection,
+ * connection refused, captive-portal redirect to a non-HTTP target, etc.).
+ *
+ * Modeled separately from `ApiError` because there is no `status`, no `body`,
+ * and no `requestId` — the request never reached a layer that could emit
+ * one. Carrying `path` and `method` keeps the structured logger payload
+ * consistent across both error shapes so observability filters do not have
+ * to special-case "request failed before response".
+ *
+ * `cause` preserves the original `TypeError` / `DOMException` for
+ * developer-facing console inspection; `logApiError` deliberately does not
+ * surface it to keep the log payload narrow and PII-free.
+ */
+export class NetworkError extends Error {
+  readonly path?: string;
+  readonly method?: string;
+
+  constructor(
+    message: string,
+    meta: { path?: string; method?: string } = {},
+    options?: { cause?: unknown }
+  ) {
+    super(message, options);
+    this.name = "NetworkError";
+    this.path = meta.path;
+    this.method = meta.method;
+  }
+}
+
+function isAbortError(err: unknown): boolean {
+  return (
+    (err instanceof DOMException && err.name === "AbortError") ||
+    (err instanceof Error && err.name === "AbortError")
+  );
+}
+
 function buildUrl(path: string): string {
   const base = getApiBaseUrl();
   const p = path.startsWith("/") ? path : `/${path}`;
@@ -94,7 +132,20 @@ export async function fetchJson<T>(
   const headers = new Headers(init?.headers);
   const method = (init?.method ?? "GET").toUpperCase();
 
-  const res = await fetch(buildUrl(path), { ...init, headers });
+  let res: Response;
+  try {
+    res = await fetch(buildUrl(path), { ...init, headers });
+  } catch (err) {
+    // Cancellation is not a failure — re-throw as-is so TanStack Query and
+    // any caller-provided AbortController.signal handlers continue to see
+    // the original AbortError shape.
+    if (isAbortError(err)) throw err;
+    throw new NetworkError(
+      err instanceof Error ? err.message : String(err),
+      { path, method },
+      { cause: err }
+    );
+  }
   const requestId = readRequestId(res.headers);
   const text = await res.text();
   let data: unknown;

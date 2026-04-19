@@ -1,5 +1,6 @@
+import { CancelledError } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiError } from "@/api/client";
+import { ApiError, NetworkError } from "@/api/client";
 import { isAbortLike, logApiError } from "@/api/logger";
 
 afterEach(() => {
@@ -18,6 +19,13 @@ describe("isAbortLike", () => {
     c.name = "CanceledError";
     expect(isAbortLike(a)).toBe(true);
     expect(isAbortLike(c)).toBe(true);
+  });
+
+  it("identifies TanStack Query's CancelledError so route changes do not log noise", () => {
+    // TanStack Query v5 cancels superseded queries by throwing this class
+    // (note the spelling — double `l`). Without explicit handling, our
+    // QueryCache.onError hook would log every filter change as an error.
+    expect(isAbortLike(new CancelledError())).toBe(true);
   });
 
   it("ignores ordinary errors and non-error values", () => {
@@ -66,6 +74,34 @@ describe("logApiError", () => {
     });
   });
 
+  it("emits a structured event for NetworkError carrying path and method (no status / requestId)", () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const cause = new TypeError("Failed to fetch");
+    const err = new NetworkError(
+      "Failed to fetch",
+      { path: "/api/v1/quotes", method: "GET" },
+      { cause }
+    );
+
+    logApiError(err, { source: "query", key: ["quotes", "list"] });
+
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy).toHaveBeenCalledWith("[ui] api error", {
+      source: "query",
+      key: ["quotes", "list"],
+      name: "NetworkError",
+      message: "Failed to fetch",
+      method: "GET",
+      path: "/api/v1/quotes",
+    });
+    // `cause` and any underlying transport details must not leak into the
+    // structured payload.
+    const payload = spy.mock.calls[0]?.[1] as Record<string, unknown>;
+    expect("cause" in payload).toBe(false);
+    expect("status" in payload).toBe(false);
+    expect("requestId" in payload).toBe(false);
+  });
+
   it("handles unknown thrown values without crashing", () => {
     const spy = vi.spyOn(console, "error").mockImplementation(() => {});
     logApiError("just a string", { source: "direct" });
@@ -100,6 +136,12 @@ describe("logApiError", () => {
       source: "query",
       key: ["quotes"],
     });
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("silently skips TanStack Query CancelledError surfaced through QueryCache.onError", () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    logApiError(new CancelledError(), { source: "query", key: ["quotes"] });
     expect(spy).not.toHaveBeenCalled();
   });
 });

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiError, fetchJson, postJson } from "@/api/client";
+import { ApiError, NetworkError, fetchJson, postJson } from "@/api/client";
 
 function jsonResponse(
   status: number,
@@ -95,6 +95,34 @@ describe("fetchJson", () => {
       method: "GET",
       path: "/api/v1/health",
     });
+  });
+
+  it("wraps a rejected fetch promise in NetworkError carrying path and method", async () => {
+    // Simulates the real shape thrown by `window.fetch` for offline / DNS /
+    // TLS / CORS-rejected requests: a `TypeError("Failed to fetch")`.
+    const cause = new TypeError("Failed to fetch");
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(cause));
+
+    const promise = fetchJson("/api/v1/quotes", { method: "GET" });
+    await expect(promise).rejects.toBeInstanceOf(NetworkError);
+    await expect(promise).rejects.toMatchObject({
+      name: "NetworkError",
+      message: "Failed to fetch",
+      path: "/api/v1/quotes",
+      method: "GET",
+    });
+    // `cause` is preserved for developer inspection but not surfaced by the
+    // structured logger (covered in `logger.test.ts`).
+    await expect(promise).rejects.toHaveProperty("cause", cause);
+  });
+
+  it("re-throws AbortError from a rejected fetch promise so cancellation semantics are preserved", async () => {
+    const abort = new DOMException("aborted", "AbortError");
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(abort));
+
+    await expect(
+      fetchJson("/api/v1/quotes", { method: "GET" })
+    ).rejects.toBe(abort);
   });
 
   it("postJson sends method POST and JSON content-type, and surfaces them on errors", async () => {
