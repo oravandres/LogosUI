@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter, useSearchParams } from "react-router";
+import { MemoryRouter, useNavigate, useSearchParams } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/api/client";
 import { ToastProvider } from "@/components/ToastProvider";
@@ -60,19 +60,34 @@ function renderPage(initialEntry: string = "/quotes") {
   });
   // We capture the live URL via a sibling route component so tests can
   // assert what `useSearchParams` mirrored into the address bar without
-  // pulling in a full RouterProvider.
+  // pulling in a full RouterProvider. The hidden "navigate to" button lets
+  // tests trigger a programmatic search-only navigation (back/forward,
+  // sidebar link, etc.) and assert that the page reacts to URL changes
+  // while it stays mounted.
   let currentSearch = "";
-  function CaptureLocation() {
+  function TestHarness() {
     const [params] = useSearchParams();
+    const navigate = useNavigate();
     currentSearch = params.toString();
-    return null;
+    return (
+      <button
+        type="button"
+        data-testid="external-navigate"
+        onClick={(ev) => {
+          const target = ev.currentTarget.dataset.target ?? "";
+          navigate(target);
+        }}
+      >
+        navigate
+      </button>
+    );
   }
   const utils = render(
     <QueryClientProvider client={client}>
       <ToastProvider>
         <MemoryRouter initialEntries={[initialEntry]}>
           <QuotesPage />
-          <CaptureLocation />
+          <TestHarness />
         </MemoryRouter>
       </ToastProvider>
     </QueryClientProvider>
@@ -80,6 +95,12 @@ function renderPage(initialEntry: string = "/quotes") {
   return {
     ...utils,
     getCurrentSearch: () => currentSearch,
+    /** Simulates a search-only navigation while QuotesPage stays mounted. */
+    navigateTo: async (target: string) => {
+      const btn = utils.getByTestId("external-navigate") as HTMLButtonElement;
+      btn.dataset.target = target;
+      btn.click();
+    },
   };
 }
 
@@ -821,6 +842,98 @@ describe("QuotesPage", () => {
       );
       // offset was cleared because changing a filter resets to page 0.
       expect(getCurrentSearch()).not.toContain("offset=");
+    });
+
+    it("rejects partially numeric ?offset values (20foo, 3.14, 1e2) so the contract matches the doc comment", async () => {
+      // We exercise the parser through the public surface: every one of
+      // these URLs must produce `offset: 0` on the first listQuotes call.
+      for (const bad of ["20foo", "3.14", "1e2", "+5"]) {
+        listQuotesMock.mockClear();
+        const { unmount } = renderPage(`/quotes?offset=${bad}`);
+        await waitFor(() => {
+          expect(listQuotesMock).toHaveBeenCalled();
+          const firstCall = listQuotesMock.mock.calls[0]?.[0];
+          expect(firstCall).toEqual(
+            expect.objectContaining({ offset: 0 })
+          );
+        });
+        unmount();
+      }
+    });
+
+    it("reacts to search-only navigation (back/forward, sidebar link) while staying mounted", async () => {
+      // Initial render: hydrate from URL.
+      const { navigateTo } = renderPage("/quotes?author_id=auth-1");
+      await waitFor(() => {
+        expect(listQuotesMock).toHaveBeenCalled();
+        expect(listQuotesMock.mock.calls[0]?.[0]).toEqual(
+          expect.objectContaining({ authorId: "auth-1" })
+        );
+      });
+
+      // Programmatic navigation to a new query string — same component
+      // instance, no remount. The list query must refire with the new
+      // filters (this is the regression: previously the `useState`
+      // initializers only ran once, so the URL changed silently and the
+      // list kept the old filters).
+      listQuotesMock.mockClear();
+      await navigateTo("/quotes?category_id=cat-2&offset=20");
+
+      await waitFor(() => {
+        expect(listQuotesMock).toHaveBeenCalled();
+        const lastCall =
+          listQuotesMock.mock.calls[listQuotesMock.mock.calls.length - 1]?.[0];
+        expect(lastCall).toEqual(
+          expect.objectContaining({
+            categoryId: "cat-2",
+            offset: 20,
+            authorId: "",
+          })
+        );
+      });
+    });
+
+    it("syncs the editable search-box draft when ?title changes externally", async () => {
+      const { navigateTo } = renderPage("/quotes?title=virtue");
+      const searchBox = await screen.findByRole("searchbox", {
+        name: /search title/i,
+      });
+      expect((searchBox as HTMLInputElement).value).toBe("virtue");
+
+      await navigateTo("/quotes?title=courage");
+
+      await waitFor(() =>
+        expect((searchBox as HTMLInputElement).value).toBe("courage")
+      );
+    });
+
+    it("does NOT render the (deleted tag) sentinel when listAllTags reported truncation (tag may exist past the cap)", async () => {
+      // Truncated response: server has more tags than the helper paged
+      // through. A `?tag_id=` outside the current window must NOT be
+      // labeled as deleted — that mislabel would confuse users on any
+      // organization with a large tag corpus.
+      listAllTagsMock.mockResolvedValue({
+        items: [
+          { id: "tag-other", name: "virtue", created_at: "2020-01-01T00:00:00.000Z" },
+        ],
+        total: 5000,
+        truncated: true,
+      });
+      renderPage("/quotes?tag_id=tag-far-away");
+      await screen.findByText("On Virtue");
+
+      // The select stays controlled but the synthetic option must be
+      // absent. The list query still goes out with the requested tag id.
+      await waitFor(() => {
+        const lastCall =
+          listQuotesMock.mock.calls[listQuotesMock.mock.calls.length - 1]?.[0];
+        expect(lastCall).toEqual(
+          expect.objectContaining({ tagId: "tag-far-away" })
+        );
+      });
+      expect(
+        screen.queryByRole("option", { name: /\(deleted tag\)/i })
+      ).not.toBeInTheDocument();
     });
 
     it("renders a (deleted tag) sentinel option when ?tag_id refers to a tag the picker no longer lists", async () => {

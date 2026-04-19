@@ -5,6 +5,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -58,13 +59,18 @@ type UpdateQuoteVars = {
 
 /**
  * Parse a non-negative integer from a URL search param. Returns `0` for
- * missing / non-integer / negative values so a tampered `?offset=-1` or
- * `?offset=foo` cannot put the list into an invalid state.
+ * missing / non-integer / negative values so a tampered `?offset=-1`,
+ * `?offset=foo`, `?offset=20foo`, `?offset=3.14`, or `?offset=1e2` cannot
+ * put the list into an invalid state.
+ *
+ * We deliberately do **not** rely on `Number.parseInt`'s lenient
+ * "consume-leading-digits" behavior — a strict regex match on the whole
+ * string is the only way to enforce the documented contract.
  */
 function parseOffsetParam(raw: string | null): number {
-  if (raw === null) return 0;
+  if (raw === null || !/^\d+$/.test(raw)) return 0;
   const n = Number.parseInt(raw, 10);
-  if (!Number.isFinite(n) || n < 0) return 0;
+  if (!Number.isFinite(n)) return 0;
   return n;
 }
 
@@ -73,34 +79,66 @@ export function QuotesPage() {
   const toast = useToast();
   const [searchParams, setSearchParams] = useSearchParams();
 
-  // URL search params are the source of truth across reload / share / deep
-  // link from the detail page. We hydrate component state once on mount and
-  // mirror state → URL via `replaceState` below; we deliberately do not
-  // re-hydrate on subsequent `searchParams` changes because state is already
-  // the live value (the mirror effect always writes a URL that matches
-  // state) and re-hydrating would just thrash.
-  const [categoryFilterId, setCategoryFilterId] = useState(
-    () => searchParams.get("category_id") ?? ""
-  );
-  const [authorFilterId, setAuthorFilterId] = useState(
-    () => searchParams.get("author_id") ?? ""
-  );
-  const [tagFilterId, setTagFilterId] = useState(
-    () => searchParams.get("tag_id") ?? ""
-  );
-  const [titleInput, setTitleInput] = useState(
-    () => searchParams.get("title") ?? ""
-  );
-  const [appliedTitle, setAppliedTitle] = useState(
-    () => searchParams.get("title") ?? ""
-  );
-  const [offset, setOffset] = useState(() =>
-    parseOffsetParam(searchParams.get("offset"))
-  );
+  // URL search params are the actual source of truth — derived directly,
+  // not mirrored from local state — so browser back/forward, programmatic
+  // `navigate('?…')`, and deep links from QuoteDetailPage all flow into the
+  // list without any hydration effect to keep in sync.
+  const categoryFilterId = searchParams.get("category_id") ?? "";
+  const authorFilterId = searchParams.get("author_id") ?? "";
+  const tagFilterId = searchParams.get("tag_id") ?? "";
+  const appliedTitle = searchParams.get("title") ?? "";
+  const offset = parseOffsetParam(searchParams.get("offset"));
+
+  // Editable draft for the search box — stays in local state so each
+  // keystroke does not roundtrip through the URL. The debounced effect
+  // below commits it into `?title` once the user stops typing.
+  const [titleInput, setTitleInput] = useState(() => appliedTitle);
 
   const [imagePickerArmed, setImagePickerArmed] = useState(false);
 
+  /**
+   * Centralized setter that mutates the current URL search params with
+   * `replace: true` so the back stack does not collect a history entry per
+   * filter change or per keystroke. Empty values are deleted (rather than
+   * set to `""`) so the URL stays clean.
+   *
+   * Pass a mutator callback rather than a fully constructed
+   * `URLSearchParams` so concurrent updates never race over a stale
+   * snapshot of the URL.
+   */
+  const updateSearchParams = useCallback(
+    (mutator: (next: URLSearchParams) => void) => {
+      setSearchParams(
+        (current) => {
+          const next = new URLSearchParams(current);
+          mutator(next);
+          return next;
+        },
+        { replace: true }
+      );
+    },
+    [setSearchParams]
+  );
+
+  /**
+   * Track the title we last committed to the URL so we can distinguish:
+   *   1. URL changed because *we* committed the debounced draft — leave
+   *      `titleInput` alone (it already matches).
+   *   2. URL changed externally (back/forward, deep link, programmatic
+   *      navigate) — sync the editable draft to match so the search box
+   *      reflects the active filter.
+   */
   const lastAppliedTitleRef = useRef(appliedTitle);
+  useEffect(() => {
+    if (appliedTitle !== lastAppliedTitleRef.current) {
+      lastAppliedTitleRef.current = appliedTitle;
+      setTitleInput(appliedTitle);
+    }
+  }, [appliedTitle]);
+
+  // Debounced commit of the editable draft into `?title`. Resetting
+  // `?offset` in the same URL transition (rather than a separate effect)
+  // avoids the extra `listQuotes` call with the stale offset.
   useEffect(() => {
     const t = window.setTimeout(() => {
       const next = titleInput.trim();
@@ -108,32 +146,14 @@ export function QuotesPage() {
         return;
       }
       lastAppliedTitleRef.current = next;
-      setOffset(0);
-      setAppliedTitle(next);
+      updateSearchParams((p) => {
+        if (next) p.set("title", next);
+        else p.delete("title");
+        p.delete("offset");
+      });
     }, SEARCH_DEBOUNCE_MS);
     return () => window.clearTimeout(t);
-  }, [titleInput]);
-
-  // Mirror filter + offset state to the URL with `replace: true` so the page
-  // is bookmarkable / shareable / deep-linkable from the quote detail page,
-  // but typing in the search box does not spam the back stack with one
-  // history entry per keystroke.
-  useEffect(() => {
-    const next = new URLSearchParams();
-    if (categoryFilterId) next.set("category_id", categoryFilterId);
-    if (authorFilterId) next.set("author_id", authorFilterId);
-    if (tagFilterId) next.set("tag_id", tagFilterId);
-    if (appliedTitle) next.set("title", appliedTitle);
-    if (offset > 0) next.set("offset", String(offset));
-    setSearchParams(next, { replace: true });
-  }, [
-    categoryFilterId,
-    authorFilterId,
-    tagFilterId,
-    appliedTitle,
-    offset,
-    setSearchParams,
-  ]);
+  }, [titleInput, updateSearchParams]);
 
   const listContextRef = useRef({
     offset,
@@ -181,11 +201,20 @@ export function QuotesPage() {
 
   // Defense in depth: if the URL deep-link carries a `?tag_id=` whose tag
   // has been deleted in the meantime, we still need a stable label so the
-  // active-filter pill renders something the user can clear. The tag is
-  // simply absent from `tagFilterOptions` until they pick another one.
+  // active-filter pill renders something the user can clear.
+  //
+  // We can only confidently call a tag "deleted" when `listAllTags()` was
+  // exhaustive — the helper is capped at 500 items and reports `truncated`
+  // when the corpus is larger. Treating absence as deletion under truncation
+  // would mislabel valid deep links to tags past the cap (e.g. an
+  // organization with thousands of tags); in that case we render no
+  // sentinel and the controlled `<select>` falls back to the placeholder
+  // visually while `tagFilterId` continues to drive the API call correctly.
+  const tagsCorpusExhaustive =
+    tagsPickerQuery.isSuccess && !(tagsPickerQuery.data?.truncated ?? true);
   const tagFilterMissing =
     tagFilterId !== "" &&
-    tagsPickerQuery.isSuccess &&
+    tagsCorpusExhaustive &&
     !tagFilterOptions.some((t) => t.id === tagFilterId);
 
   const listQuery = useQuery({
@@ -256,8 +285,14 @@ export function QuotesPage() {
         ctx.titleSearch === vars.titleSearch;
       if (vars.onlyRowOnPage && vars.pageOffset > 0 && stillOnSameView) {
         const next = Math.max(0, vars.pageOffset - QUOTES_PAGE_SIZE);
+        // `flushSync` ensures the URL transition (and the dependent list
+        // query key) is committed before `invalidateQueries` triggers the
+        // refetch — otherwise the refetch goes out with the stale offset.
         flushSync(() => {
-          setOffset(next);
+          updateSearchParams((p) => {
+            if (next > 0) p.set("offset", String(next));
+            else p.delete("offset");
+          });
         });
       }
       await queryClient.invalidateQueries({ queryKey: ["quotes"] });
@@ -281,13 +316,18 @@ export function QuotesPage() {
   };
 
   const clearFilters = () => {
-    setCategoryFilterId("");
-    setAuthorFilterId("");
-    setTagFilterId("");
+    // Clearing the editable draft and the latched "last committed" marker
+    // alongside the URL transition prevents the debounce effect from
+    // firing a redundant follow-up commit with the now-empty value.
     setTitleInput("");
-    setAppliedTitle("");
     lastAppliedTitleRef.current = "";
-    setOffset(0);
+    updateSearchParams((p) => {
+      p.delete("category_id");
+      p.delete("author_id");
+      p.delete("tag_id");
+      p.delete("title");
+      p.delete("offset");
+    });
   };
 
   const hasActiveFilter =
@@ -410,18 +450,27 @@ export function QuotesPage() {
     : false;
 
   const onCategoryFilterChange = (next: string) => {
-    setCategoryFilterId(next);
-    setOffset(0);
+    updateSearchParams((p) => {
+      if (next) p.set("category_id", next);
+      else p.delete("category_id");
+      p.delete("offset");
+    });
   };
 
   const onAuthorFilterChange = (next: string) => {
-    setAuthorFilterId(next);
-    setOffset(0);
+    updateSearchParams((p) => {
+      if (next) p.set("author_id", next);
+      else p.delete("author_id");
+      p.delete("offset");
+    });
   };
 
   const onTagFilterChange = (next: string) => {
-    setTagFilterId(next);
-    setOffset(0);
+    updateSearchParams((p) => {
+      if (next) p.set("tag_id", next);
+      else p.delete("tag_id");
+      p.delete("offset");
+    });
   };
 
   const onSubmitCreate = (e: FormEvent<HTMLFormElement>) => {
@@ -951,9 +1000,13 @@ export function QuotesPage() {
                   type="button"
                   className="btn"
                   disabled={!canPrev}
-                  onClick={() =>
-                    setOffset((o) => Math.max(0, o - QUOTES_PAGE_SIZE))
-                  }
+                  onClick={() => {
+                    const next = Math.max(0, offset - QUOTES_PAGE_SIZE);
+                    updateSearchParams((p) => {
+                      if (next > 0) p.set("offset", String(next));
+                      else p.delete("offset");
+                    });
+                  }}
                 >
                   Previous
                 </button>
@@ -961,7 +1014,12 @@ export function QuotesPage() {
                   type="button"
                   className="btn"
                   disabled={!canNext}
-                  onClick={() => setOffset((o) => o + QUOTES_PAGE_SIZE)}
+                  onClick={() => {
+                    const next = offset + QUOTES_PAGE_SIZE;
+                    updateSearchParams((p) =>
+                      p.set("offset", String(next))
+                    );
+                  }}
                 >
                   Next
                 </button>
