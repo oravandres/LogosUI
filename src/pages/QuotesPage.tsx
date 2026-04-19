@@ -97,6 +97,16 @@ export function QuotesPage() {
   const [imagePickerArmed, setImagePickerArmed] = useState(false);
 
   /**
+   * Latches the URL string we last wrote ourselves so the resync effect
+   * below can distinguish "we just committed this" from "the URL changed
+   * underneath us" (back/forward, sidebar link, deep link, programmatic
+   * `navigate('?…')`). Initialized to `null` so the very first render after
+   * mount is treated as external — that's harmless because `titleInput`'s
+   * initializer already seeded it from `appliedTitle`.
+   */
+  const lastSelfWrittenSearchRef = useRef<string | null>(null);
+
+  /**
    * Centralized setter that mutates the current URL search params with
    * `replace: true` so the back stack does not collect a history entry per
    * filter change or per keystroke. Empty values are deleted (rather than
@@ -104,7 +114,9 @@ export function QuotesPage() {
    *
    * Pass a mutator callback rather than a fully constructed
    * `URLSearchParams` so concurrent updates never race over a stale
-   * snapshot of the URL.
+   * snapshot of the URL. Records the resulting string into
+   * `lastSelfWrittenSearchRef` so the resync effect can recognize self
+   * writes and skip clobbering the editable draft on its own commits.
    */
   const updateSearchParams = useCallback(
     (mutator: (next: URLSearchParams) => void) => {
@@ -112,6 +124,7 @@ export function QuotesPage() {
         (current) => {
           const next = new URLSearchParams(current);
           mutator(next);
+          lastSelfWrittenSearchRef.current = next.toString();
           return next;
         },
         { replace: true }
@@ -121,20 +134,46 @@ export function QuotesPage() {
   );
 
   /**
-   * Track the title we last committed to the URL so we can distinguish:
-   *   1. URL changed because *we* committed the debounced draft — leave
-   *      `titleInput` alone (it already matches).
-   *   2. URL changed externally (back/forward, deep link, programmatic
-   *      navigate) — sync the editable draft to match so the search box
-   *      reflects the active filter.
+   * Tracks the `?title` value we last committed via the debounce / handler
+   * paths so the debounce effect can bail when the in-flight draft already
+   * matches the current URL (e.g. after we already pushed `?title=foo` on a
+   * previous tick and `titleInput` is still `"foo"`).
    */
   const lastAppliedTitleRef = useRef(appliedTitle);
+
+  /**
+   * Resync the editable search-box draft on **any** external URL change —
+   * not just `?title` changes. This closes a debounce/navigation race
+   * where:
+   *
+   *   1. User types `sto` into the search box (`titleInput = "sto"`,
+   *      `appliedTitle = ""`).
+   *   2. Before the 400 ms debounce fires they navigate to a deep link
+   *      whose `?title` value is the same (commonly: still missing).
+   *   3. Old behavior gated this effect on `appliedTitle`, so the stale
+   *      draft and its pending timer survived; the timer then appended
+   *      `?title=sto` onto the freshly navigated URL — a user-visible leak.
+   *
+   * Snapping `titleInput` here triggers the debounce effect's `[titleInput]`
+   * cleanup, which clears the pending timer outright; the new timer
+   * scheduled afterwards immediately bails because draft == latch. Self
+   * writes (debounced commit, filter handlers, pager, delete `onSuccess`)
+   * pre-record their resulting URL into `lastSelfWrittenSearchRef`, so this
+   * effect skips them and does not clobber the user's typing on every
+   * round-trip.
+   *
+   * Self-write detection has to compare the *string* — `URLSearchParams`
+   * instance equality cannot be relied on across renders.
+   */
   useEffect(() => {
-    if (appliedTitle !== lastAppliedTitleRef.current) {
-      lastAppliedTitleRef.current = appliedTitle;
-      setTitleInput(appliedTitle);
+    const currentSearch = searchParams.toString();
+    if (lastSelfWrittenSearchRef.current === currentSearch) {
+      return;
     }
-  }, [appliedTitle]);
+    lastSelfWrittenSearchRef.current = currentSearch;
+    lastAppliedTitleRef.current = appliedTitle;
+    setTitleInput(appliedTitle);
+  }, [searchParams, appliedTitle]);
 
   // Debounced commit of the editable draft into `?title`. Resetting
   // `?offset` in the same URL transition (rather than a separate effect)

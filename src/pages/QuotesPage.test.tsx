@@ -907,6 +907,53 @@ describe("QuotesPage", () => {
       );
     });
 
+    it("does not let an uncommitted search-box draft leak across an external navigation that keeps ?title unchanged", async () => {
+      // Regression for the debounce/navigation race:
+      //   1. User types `sto` into the search box on /quotes (no ?title).
+      //   2. Before the debounce fires they click an author/tag deep link
+      //      whose ?title value is also missing.
+      //   3. Old behavior: the resync effect was gated on `appliedTitle`,
+      //      so an unchanged committed value left the stale draft alive
+      //      and the pending timer later appended `?title=sto` onto the
+      //      freshly navigated URL — the draft leaked across the
+      //      navigation.
+      //
+      // The fix snaps `titleInput` on any external search-param change,
+      // which (a) updates the visible input and (b) cancels the pending
+      // debounce via the [titleInput] effect cleanup. We assert both: no
+      // `?title=sto` ever lands on the new URL even after the debounce
+      // window elapses, and the search box reflects the destination URL.
+      const user = userEvent.setup();
+      const { navigateTo, getCurrentSearch } = renderPage("/quotes");
+      await screen.findByText("On Virtue");
+      await waitFor(() => expect(getCurrentSearch()).toBe(""));
+
+      const searchBox = await screen.findByRole("searchbox", {
+        name: /search title/i,
+      });
+      await user.type(searchBox, "sto");
+      expect((searchBox as HTMLInputElement).value).toBe("sto");
+      // Pre-debounce: ?title hasn't been committed yet.
+      expect(getCurrentSearch()).not.toContain("title=");
+
+      // External navigation while the debounce is still in flight; the
+      // destination keeps `?title` absent (mirrors the "click an author
+      // deep link" scenario from the review comment).
+      await navigateTo("/quotes?author_id=auth-1");
+
+      // Wait past the original debounce window (SEARCH_DEBOUNCE_MS = 400 ms)
+      // plus generous slack for the test runner. If the leak is back, the
+      // pending timer would commit `?title=sto` onto the new URL during
+      // this wait.
+      await new Promise((resolve) => setTimeout(resolve, 600));
+
+      expect(getCurrentSearch()).toContain("author_id=auth-1");
+      expect(getCurrentSearch()).not.toContain("title=");
+      // The search box also catches up to the destination URL's value
+      // (empty) so the user is not left looking at their stale draft.
+      expect((searchBox as HTMLInputElement).value).toBe("");
+    });
+
     it("does NOT render the (deleted tag) sentinel when listAllTags reported truncation (tag may exist past the cap)", async () => {
       // Truncated response: server has more tags than the helper paged
       // through. A `?tag_id=` outside the current window must NOT be
