@@ -18,15 +18,82 @@ export function getApiBaseUrl(): string {
   );
 }
 
+/**
+ * Optional metadata attached to an `ApiError` for observability. Populated by
+ * `fetchJson` so the global query / mutation error logger can emit a
+ * structured event (`status`, `method`, `path`, `requestId`) without each
+ * call site having to thread the request shape through itself.
+ *
+ * `requestId` is the value of the response's `X-Request-Id` header when the
+ * backend emits one; it is `undefined` when the header is absent. (The UI
+ * does not yet generate a client-side request id — that is deferred until
+ * Logos starts emitting one server-side per Plan §D.)
+ */
+export interface ApiErrorMeta {
+  path?: string;
+  method?: string;
+  requestId?: string;
+}
+
 export class ApiError extends Error {
+  readonly status: number;
+  readonly body: unknown;
+  readonly path?: string;
+  readonly method?: string;
+  readonly requestId?: string;
+
   constructor(
     message: string,
-    readonly status: number,
-    readonly body: unknown
+    status: number,
+    body: unknown,
+    meta: ApiErrorMeta = {}
   ) {
     super(message);
     this.name = "ApiError";
+    this.status = status;
+    this.body = body;
+    this.path = meta.path;
+    this.method = meta.method;
+    this.requestId = meta.requestId;
   }
+}
+
+/**
+ * Transport-level failure: the `fetch` promise rejected before any HTTP
+ * response was produced (offline, DNS failure, TLS error, CORS rejection,
+ * connection refused, captive-portal redirect to a non-HTTP target, etc.).
+ *
+ * Modeled separately from `ApiError` because there is no `status`, no `body`,
+ * and no `requestId` — the request never reached a layer that could emit
+ * one. Carrying `path` and `method` keeps the structured logger payload
+ * consistent across both error shapes so observability filters do not have
+ * to special-case "request failed before response".
+ *
+ * `cause` preserves the original `TypeError` / `DOMException` for
+ * developer-facing console inspection; `logApiError` deliberately does not
+ * surface it to keep the log payload narrow and PII-free.
+ */
+export class NetworkError extends Error {
+  readonly path?: string;
+  readonly method?: string;
+
+  constructor(
+    message: string,
+    meta: { path?: string; method?: string } = {},
+    options?: { cause?: unknown }
+  ) {
+    super(message, options);
+    this.name = "NetworkError";
+    this.path = meta.path;
+    this.method = meta.method;
+  }
+}
+
+function isAbortError(err: unknown): boolean {
+  return (
+    (err instanceof DOMException && err.name === "AbortError") ||
+    (err instanceof Error && err.name === "AbortError")
+  );
 }
 
 function buildUrl(path: string): string {
@@ -48,20 +115,49 @@ function errorMessageFromBody(data: unknown, fallback: string): string {
   return fallback;
 }
 
+function readRequestId(headers: Headers): string | undefined {
+  // Header names are case-insensitive per RFC 7230; `Headers.get` already
+  // normalises. Treat empty strings as absent so a misbehaving proxy that
+  // strips the value to "" does not poison the log payload.
+  const raw = headers.get("x-request-id");
+  if (raw === null) return undefined;
+  const trimmed = raw.trim();
+  return trimmed === "" ? undefined : trimmed;
+}
+
 export async function fetchJson<T>(
   path: string,
   init?: RequestInit
 ): Promise<T> {
   const headers = new Headers(init?.headers);
+  const method = (init?.method ?? "GET").toUpperCase();
 
-  const res = await fetch(buildUrl(path), { ...init, headers });
+  let res: Response;
+  try {
+    res = await fetch(buildUrl(path), { ...init, headers });
+  } catch (err) {
+    // Cancellation is not a failure — re-throw as-is so TanStack Query and
+    // any caller-provided AbortController.signal handlers continue to see
+    // the original AbortError shape.
+    if (isAbortError(err)) throw err;
+    throw new NetworkError(
+      err instanceof Error ? err.message : String(err),
+      { path, method },
+      { cause: err }
+    );
+  }
+  const requestId = readRequestId(res.headers);
   const text = await res.text();
   let data: unknown;
   if (text.length > 0) {
     try {
       data = JSON.parse(text) as unknown;
     } catch {
-      throw new ApiError("Response is not valid JSON", res.status, text);
+      throw new ApiError("Response is not valid JSON", res.status, text, {
+        path,
+        method,
+        requestId,
+      });
     }
   } else {
     data = undefined;
@@ -71,7 +167,8 @@ export async function fetchJson<T>(
     throw new ApiError(
       errorMessageFromBody(data, res.statusText),
       res.status,
-      data
+      data,
+      { path, method, requestId }
     );
   }
 
