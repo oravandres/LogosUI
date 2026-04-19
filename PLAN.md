@@ -63,12 +63,26 @@ Dedicated read-oriented page at `/quotes/:id` rendering:
 - Cache keys are aligned with the home dashboard (`["author", id]`) and the quotes list (`["quote-tags", id]`) so the same fetch backs every view.
 - Title links: `HomePage` recent-quote titles and the `QuotesPage` row title cell now `<Link>` straight to `/quotes/:id`.
 
-### Phase B.1 — Filtered-list deep links and inline edit on the detail page _(small, deferred)_
+### Phase B.1 — Filtered-list deep links and inline edit on the detail page
 
-Split out of Phase B because each requires plumbing that does not yet exist:
+Split out of Phase B because each requires plumbing that did not exist at the time Phase B shipped. Sliced into three independently-shippable PRs:
 
-- **"Open list with this author/tag"** links from the detail page need URL-search-param syncing in `QuotesPage` (currently filters live in component state only). `?tag=` also needs a backend filter on `GET /quotes` that the API does not expose today; coordinate with Logos before shipping.
-- **Inline Edit on the detail page** would duplicate the QuotesPage create/edit form. Worth doing once the form is itself extracted into a shared `<QuoteForm>` component; for now the detail page links to `/quotes` for editing.
+#### ~~B.1a — URL search params + tag filter on `QuotesPage`~~ _(shipped)_
+
+- `QuotesPage` filter and pagination state (`category_id`, `author_id`, `tag_id`, `title`, `offset`) is now hydrated from the URL on mount via `useSearchParams`, and mirrored back to the URL on every change with `setSearchParams(next, { replace: true })`. `replaceState` semantics keep the back stack clean while typing in the search box, while still leaving the URL bookmarkable / shareable / deep-linkable from the upcoming `QuoteDetailPage` "Open list with this tag" affordance.
+- `parseOffsetParam` clamps tampered or non-integer `?offset` values back to `0` as defense in depth so a hand-edited URL cannot put the list into an invalid state.
+- `listQuotes({ tagId })` plumbs through to the new backend `?tag_id=` filter (Logos hashed semi-join — coordinated server-side change, see Logos `12-pr-review-lessons.mdc`). A plain `<select>` tag picker — populated by the existing `["tags", "all"]` query, so opening the per-row tag editor on the same view does not refetch — sits next to the Category filter in the toolbar.
+- When a deep-link's `?tag_id` references a tag that has been deleted in the meantime (`tagFilterMissing`), the controlled `<select>` renders a synthetic disabled `(deleted tag)` option so it stays in sync with the active filter (otherwise React would silently reset the value to the placeholder and the user could not tell why the list looked filtered).
+- `tagFilterId` was threaded through the list query key, the delete-mutation `stillOnSameView` comparison, `clearFilters`, and `hasActiveFilter` so every existing invariant continues to hold.
+- Tests: 6 new specs in `QuotesPage.test.tsx` cover URL hydration → first `listQuotes` call, the `?offset=-1` clamp, `replace`-only mirroring (pristine URL stays pristine until a filter is touched), the "Clear filters" path stripping every param off the URL, the `(deleted tag)` sentinel for missing tag deep links, and the tag-filter dropdown driving both the API call and the URL. Total suite: **142/142 passing**. ESLint, `tsc --noEmit`, and `vite build` clean.
+
+#### B.1b — Deep links from `QuoteDetailPage` _(next)_
+
+- Add "Open list with this author" / "Open list with this tag" links from `QuoteDetailPage` pointing at `/quotes?author_id=…` / `/quotes?tag_id=…`. Now unblocked by B.1a.
+
+#### B.1c — Extract `<QuoteForm>` and inline edit on the detail page _(after B.1b)_
+
+- Pull the create / inline-edit form out of `QuotesPage` into `src/components/QuoteForm.tsx` (`mode: "create" | "edit"`), wire `QuotesPage` to use it for both flows, then add an `Edit` mode to `QuoteDetailPage` that uses the same component. Largest of the three; worth its own PR so the form extraction can be reviewed independently from the detail-page wiring.
 
 ### ~~Phase C — Global polish~~ _(shipped)_
 

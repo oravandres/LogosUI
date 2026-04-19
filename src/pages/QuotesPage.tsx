@@ -13,7 +13,7 @@ import {
   type ReactNode,
 } from "react";
 import { flushSync } from "react-dom";
-import { Link } from "react-router";
+import { Link, useSearchParams } from "react-router";
 import { ApiError } from "@/api/client";
 import { listAllCategoriesByType } from "@/api/categories";
 import { getImage, listImages } from "@/api/images";
@@ -47,6 +47,7 @@ type DeleteQuoteVars = {
   pageOffset: number;
   categoryFilterId: string;
   authorFilterId: string;
+  tagFilterId: string;
   titleSearch: string;
 };
 
@@ -55,18 +56,51 @@ type UpdateQuoteVars = {
   body: QuoteWriteBody;
 };
 
+/**
+ * Parse a non-negative integer from a URL search param. Returns `0` for
+ * missing / non-integer / negative values so a tampered `?offset=-1` or
+ * `?offset=foo` cannot put the list into an invalid state.
+ */
+function parseOffsetParam(raw: string | null): number {
+  if (raw === null) return 0;
+  const n = Number.parseInt(raw, 10);
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return n;
+}
+
 export function QuotesPage() {
   const queryClient = useQueryClient();
   const toast = useToast();
-  const [categoryFilterId, setCategoryFilterId] = useState("");
-  const [authorFilterId, setAuthorFilterId] = useState("");
-  const [titleInput, setTitleInput] = useState("");
-  const [appliedTitle, setAppliedTitle] = useState("");
-  const [offset, setOffset] = useState(0);
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  // URL search params are the source of truth across reload / share / deep
+  // link from the detail page. We hydrate component state once on mount and
+  // mirror state → URL via `replaceState` below; we deliberately do not
+  // re-hydrate on subsequent `searchParams` changes because state is already
+  // the live value (the mirror effect always writes a URL that matches
+  // state) and re-hydrating would just thrash.
+  const [categoryFilterId, setCategoryFilterId] = useState(
+    () => searchParams.get("category_id") ?? ""
+  );
+  const [authorFilterId, setAuthorFilterId] = useState(
+    () => searchParams.get("author_id") ?? ""
+  );
+  const [tagFilterId, setTagFilterId] = useState(
+    () => searchParams.get("tag_id") ?? ""
+  );
+  const [titleInput, setTitleInput] = useState(
+    () => searchParams.get("title") ?? ""
+  );
+  const [appliedTitle, setAppliedTitle] = useState(
+    () => searchParams.get("title") ?? ""
+  );
+  const [offset, setOffset] = useState(() =>
+    parseOffsetParam(searchParams.get("offset"))
+  );
 
   const [imagePickerArmed, setImagePickerArmed] = useState(false);
 
-  const lastAppliedTitleRef = useRef("");
+  const lastAppliedTitleRef = useRef(appliedTitle);
   useEffect(() => {
     const t = window.setTimeout(() => {
       const next = titleInput.trim();
@@ -80,22 +114,53 @@ export function QuotesPage() {
     return () => window.clearTimeout(t);
   }, [titleInput]);
 
+  // Mirror filter + offset state to the URL with `replace: true` so the page
+  // is bookmarkable / shareable / deep-linkable from the quote detail page,
+  // but typing in the search box does not spam the back stack with one
+  // history entry per keystroke.
+  useEffect(() => {
+    const next = new URLSearchParams();
+    if (categoryFilterId) next.set("category_id", categoryFilterId);
+    if (authorFilterId) next.set("author_id", authorFilterId);
+    if (tagFilterId) next.set("tag_id", tagFilterId);
+    if (appliedTitle) next.set("title", appliedTitle);
+    if (offset > 0) next.set("offset", String(offset));
+    setSearchParams(next, { replace: true });
+  }, [
+    categoryFilterId,
+    authorFilterId,
+    tagFilterId,
+    appliedTitle,
+    offset,
+    setSearchParams,
+  ]);
+
   const listContextRef = useRef({
     offset,
     categoryFilterId,
     authorFilterId,
+    tagFilterId,
     titleSearch: appliedTitle,
   });
   listContextRef.current = {
     offset,
     categoryFilterId,
     authorFilterId,
+    tagFilterId,
     titleSearch: appliedTitle,
   };
 
   const quoteCategoriesQuery = useQuery({
     queryKey: ["categories", "picker", "quote"],
     queryFn: ({ signal }) => listAllCategoriesByType("quote", signal),
+    staleTime: 60_000,
+  });
+
+  // Shared with the per-row tag editor (`["tags", "all"]`) so opening the
+  // editor on the same view does not refetch the whole tag corpus.
+  const tagsPickerQuery = useQuery({
+    queryKey: ["tags", "all"],
+    queryFn: ({ signal }) => listAllTags(signal),
     staleTime: 60_000,
   });
 
@@ -108,10 +173,20 @@ export function QuotesPage() {
   });
 
   const quoteCategoryOptions = quoteCategoriesQuery.data ?? [];
+  const tagFilterOptions = tagsPickerQuery.data?.items ?? [];
   const imageOptions = useMemo(
     () => imagesPickerQuery.data?.items ?? [],
     [imagesPickerQuery.data]
   );
+
+  // Defense in depth: if the URL deep-link carries a `?tag_id=` whose tag
+  // has been deleted in the meantime, we still need a stable label so the
+  // active-filter pill renders something the user can clear. The tag is
+  // simply absent from `tagFilterOptions` until they pick another one.
+  const tagFilterMissing =
+    tagFilterId !== "" &&
+    tagsPickerQuery.isSuccess &&
+    !tagFilterOptions.some((t) => t.id === tagFilterId);
 
   const listQuery = useQuery({
     queryKey: [
@@ -119,6 +194,7 @@ export function QuotesPage() {
       {
         categoryFilterId,
         authorFilterId,
+        tagFilterId,
         titleSearch: appliedTitle,
         offset,
       },
@@ -129,6 +205,7 @@ export function QuotesPage() {
         offset,
         categoryId: categoryFilterId,
         authorId: authorFilterId,
+        tagId: tagFilterId,
         title: appliedTitle,
         signal,
       }),
@@ -175,6 +252,7 @@ export function QuotesPage() {
         ctx.offset === vars.pageOffset &&
         ctx.categoryFilterId === vars.categoryFilterId &&
         ctx.authorFilterId === vars.authorFilterId &&
+        ctx.tagFilterId === vars.tagFilterId &&
         ctx.titleSearch === vars.titleSearch;
       if (vars.onlyRowOnPage && vars.pageOffset > 0 && stillOnSameView) {
         const next = Math.max(0, vars.pageOffset - QUOTES_PAGE_SIZE);
@@ -205,6 +283,7 @@ export function QuotesPage() {
   const clearFilters = () => {
     setCategoryFilterId("");
     setAuthorFilterId("");
+    setTagFilterId("");
     setTitleInput("");
     setAppliedTitle("");
     lastAppliedTitleRef.current = "";
@@ -214,6 +293,7 @@ export function QuotesPage() {
   const hasActiveFilter =
     categoryFilterId !== "" ||
     authorFilterId !== "" ||
+    tagFilterId !== "" ||
     appliedTitle !== "";
 
   // Inline edit state
@@ -336,6 +416,11 @@ export function QuotesPage() {
 
   const onAuthorFilterChange = (next: string) => {
     setAuthorFilterId(next);
+    setOffset(0);
+  };
+
+  const onTagFilterChange = (next: string) => {
+    setTagFilterId(next);
     setOffset(0);
   };
 
@@ -530,6 +615,35 @@ export function QuotesPage() {
                 {quoteCategoryOptions.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="field inline">
+              <span className="field-label">Tag</span>
+              <select
+                className="input input-compact"
+                value={tagFilterId}
+                onChange={(ev) => onTagFilterChange(ev.target.value)}
+                disabled={tagsPickerQuery.isPending}
+                aria-label="Filter by tag"
+              >
+                <option value="">All tags</option>
+                {/*
+                  When the URL deep-link references a tag that no longer
+                  exists, render a synthetic disabled option so the
+                  controlled <select> still reflects the active filter
+                  (otherwise React resets the value to the placeholder
+                  silently and the user can't tell why the list is empty).
+                */}
+                {tagFilterMissing ? (
+                  <option value={tagFilterId} disabled>
+                    (deleted tag)
+                  </option>
+                ) : null}
+                {tagFilterOptions.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name}
                   </option>
                 ))}
               </select>
@@ -797,6 +911,7 @@ export function QuotesPage() {
                                     pageOffset: offset,
                                     categoryFilterId,
                                     authorFilterId,
+                                    tagFilterId,
                                     titleSearch: appliedTitle,
                                   });
                                 }

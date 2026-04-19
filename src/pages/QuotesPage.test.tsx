@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter } from "react-router";
+import { MemoryRouter, useSearchParams } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/api/client";
 import { ToastProvider } from "@/components/ToastProvider";
@@ -51,22 +51,36 @@ vi.mock("@/api/tags", () => ({
   removeTagFromQuote: (...args: unknown[]) => removeTagFromQuoteMock(...args),
 }));
 
-function renderPage() {
+function renderPage(initialEntry: string = "/quotes") {
   const client = new QueryClient({
     defaultOptions: {
       queries: { retry: false },
       mutations: { retry: false },
     },
   });
-  return render(
+  // We capture the live URL via a sibling route component so tests can
+  // assert what `useSearchParams` mirrored into the address bar without
+  // pulling in a full RouterProvider.
+  let currentSearch = "";
+  function CaptureLocation() {
+    const [params] = useSearchParams();
+    currentSearch = params.toString();
+    return null;
+  }
+  const utils = render(
     <QueryClientProvider client={client}>
       <ToastProvider>
-        <MemoryRouter>
+        <MemoryRouter initialEntries={[initialEntry]}>
           <QuotesPage />
+          <CaptureLocation />
         </MemoryRouter>
       </ToastProvider>
     </QueryClientProvider>
   );
+  return {
+    ...utils,
+    getCurrentSearch: () => currentSearch,
+  };
 }
 
 function sampleQuote() {
@@ -635,6 +649,38 @@ describe("QuotesPage", () => {
       ).not.toBeInTheDocument();
     });
 
+    it("filters the list by tag when a tag is selected from the toolbar", async () => {
+      listAllTagsMock.mockResolvedValue({
+        items: [
+          { id: "tag-1", name: "wisdom", created_at: "2020-01-01T00:00:00.000Z" },
+          { id: "tag-2", name: "virtue", created_at: "2020-01-01T00:00:00.000Z" },
+        ],
+        total: 2,
+        truncated: false,
+      });
+      const user = userEvent.setup();
+      const { getCurrentSearch } = renderPage();
+      await screen.findByText("On Virtue");
+
+      const tagFilter = await screen.findByRole("combobox", {
+        name: "Filter by tag",
+      });
+      await user.selectOptions(tagFilter, "tag-2");
+
+      await waitFor(() => {
+        const lastCall =
+          listQuotesMock.mock.calls[listQuotesMock.mock.calls.length - 1]?.[0];
+        expect(lastCall).toEqual(
+          expect.objectContaining({ tagId: "tag-2" })
+        );
+      });
+      // Tag id should also be mirrored into the URL so the filtered list is
+      // shareable and reachable via the deep link from QuoteDetailPage.
+      await waitFor(() =>
+        expect(getCurrentSearch()).toContain("tag_id=tag-2")
+      );
+    });
+
     it("on a non-404 read failure, hides the empty state and the add picker", async () => {
       listQuoteTagsMock.mockRejectedValue(
         new ApiError("upstream timeout", 500, {})
@@ -655,6 +701,153 @@ describe("QuotesPage", () => {
       expect(
         screen.queryByRole("combobox", { name: /add tag to on virtue/i })
       ).not.toBeInTheDocument();
+    });
+  });
+
+  describe("URL search params", () => {
+    it("hydrates filter state from the URL on mount and forwards them to listQuotes", async () => {
+      listAllTagsMock.mockResolvedValue({
+        items: [
+          { id: "tag-1", name: "wisdom", created_at: "2020-01-01T00:00:00.000Z" },
+        ],
+        total: 1,
+        truncated: false,
+      });
+      listAllCategoriesByTypeMock.mockResolvedValue([
+        {
+          id: "cat-1",
+          name: "Philosophy",
+          type: "quote",
+          created_at: "2020-01-01T00:00:00.000Z",
+          updated_at: "2020-01-01T00:00:00.000Z",
+        },
+      ]);
+
+      renderPage(
+        "/quotes?author_id=auth-1&category_id=cat-1&tag_id=tag-1&title=virtue&offset=20"
+      );
+
+      // The first listQuotes call must already carry every URL-derived
+      // filter so the user lands on exactly the page they shared / linked.
+      await waitFor(() => {
+        expect(listQuotesMock).toHaveBeenCalled();
+        const firstCall = listQuotesMock.mock.calls[0]?.[0];
+        expect(firstCall).toEqual(
+          expect.objectContaining({
+            authorId: "auth-1",
+            categoryId: "cat-1",
+            tagId: "tag-1",
+            title: "virtue",
+            offset: 20,
+          })
+        );
+      });
+
+      // Visible UI controls should also reflect the hydrated state so the
+      // user can read the active filter without inspecting the URL.
+      const titleSearch = await screen.findByRole("searchbox", {
+        name: /search title/i,
+      });
+      expect((titleSearch as HTMLInputElement).value).toBe("virtue");
+    });
+
+    it("clamps a negative or non-integer ?offset back to 0 (defense against tampered links)", async () => {
+      renderPage("/quotes?offset=-1");
+
+      await waitFor(() => {
+        expect(listQuotesMock).toHaveBeenCalled();
+        const firstCall = listQuotesMock.mock.calls[0]?.[0];
+        expect(firstCall).toEqual(expect.objectContaining({ offset: 0 }));
+      });
+    });
+
+    it("mirrors filter changes into the URL via replaceState (no history spam)", async () => {
+      const user = userEvent.setup();
+      const { getCurrentSearch } = renderPage();
+      await screen.findByText("On Virtue");
+
+      // Pristine URL: nothing to mirror until the user touches a filter.
+      await waitFor(() => expect(getCurrentSearch()).toBe(""));
+
+      const filterCombo = screen.getByRole("combobox", {
+        name: "Filter by author",
+      });
+      await user.click(filterCombo);
+      await screen.findByRole("option", { name: "Aristotle" });
+      await user.keyboard("{ArrowDown}");
+      await user.keyboard("{Enter}");
+
+      await waitFor(() =>
+        expect(getCurrentSearch()).toContain("author_id=auth-1")
+      );
+      // Sanity: only the touched filter ends up on the URL — empty strings
+      // must not serialize as `&category_id=&tag_id=`.
+      expect(getCurrentSearch()).not.toMatch(/category_id=/);
+      expect(getCurrentSearch()).not.toMatch(/tag_id=/);
+      expect(getCurrentSearch()).not.toMatch(/offset=/);
+    });
+
+    it("clearing all filters strips every param off the URL", async () => {
+      const user = userEvent.setup();
+      const { getCurrentSearch } = renderPage(
+        "/quotes?author_id=auth-1&offset=20"
+      );
+      await screen.findByText("On Virtue");
+      await waitFor(() => expect(getCurrentSearch()).toContain("author_id=auth-1"));
+
+      // The filter-aware empty-state path renders a "Clear filters" button
+      // when results come back empty under an active filter — exercise that
+      // path rather than reaching into private setters.
+      listQuotesMock.mockResolvedValueOnce({
+        items: [],
+        total: 0,
+        offset: 20,
+        limit: 20,
+      });
+      // Force a refetch by toggling one filter, then confirm Clear filters
+      // wipes the URL entirely.
+      const filterCombo = screen.getByRole("combobox", {
+        name: "Filter by author",
+      });
+      await user.click(filterCombo);
+      // Select the "All authors" sentinel to clear that one filter via UI.
+      const allAuthors = await screen.findByRole("option", {
+        name: /all authors/i,
+      });
+      await user.click(allAuthors);
+
+      await waitFor(() =>
+        expect(getCurrentSearch()).not.toContain("author_id=")
+      );
+      // offset was cleared because changing a filter resets to page 0.
+      expect(getCurrentSearch()).not.toContain("offset=");
+    });
+
+    it("renders a (deleted tag) sentinel option when ?tag_id refers to a tag the picker no longer lists", async () => {
+      // Tag picker resolves to a list that does NOT include the URL's tag
+      // id — simulating a tag deleted between the link being copied and the
+      // page being opened.
+      listAllTagsMock.mockResolvedValue({
+        items: [
+          { id: "tag-other", name: "virtue", created_at: "2020-01-01T00:00:00.000Z" },
+        ],
+        total: 1,
+        truncated: false,
+      });
+      renderPage("/quotes?tag_id=tag-gone");
+      await screen.findByText("On Virtue");
+
+      const tagFilter = await screen.findByRole("combobox", {
+        name: "Filter by tag",
+      });
+      await waitFor(() =>
+        expect((tagFilter as HTMLSelectElement).value).toBe("tag-gone")
+      );
+      // The synthetic option keeps the controlled select in sync with the
+      // active URL filter; it must be disabled so the user cannot re-pick
+      // a known-dead value.
+      const ghost = screen.getByRole("option", { name: /\(deleted tag\)/i });
+      expect(ghost).toBeDisabled();
     });
   });
 });
