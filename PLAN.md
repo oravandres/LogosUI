@@ -63,12 +63,27 @@ Dedicated read-oriented page at `/quotes/:id` rendering:
 - Cache keys are aligned with the home dashboard (`["author", id]`) and the quotes list (`["quote-tags", id]`) so the same fetch backs every view.
 - Title links: `HomePage` recent-quote titles and the `QuotesPage` row title cell now `<Link>` straight to `/quotes/:id`.
 
-### Phase B.1 — Filtered-list deep links and inline edit on the detail page _(small, deferred)_
+### Phase B.1 — Filtered-list deep links and inline edit on the detail page
 
-Split out of Phase B because each requires plumbing that does not yet exist:
+Split out of Phase B because each requires plumbing that did not exist at the time Phase B shipped. Sliced into three independently-shippable PRs:
 
-- **"Open list with this author/tag"** links from the detail page need URL-search-param syncing in `QuotesPage` (currently filters live in component state only). `?tag=` also needs a backend filter on `GET /quotes` that the API does not expose today; coordinate with Logos before shipping.
-- **Inline Edit on the detail page** would duplicate the QuotesPage create/edit form. Worth doing once the form is itself extracted into a shared `<QuoteForm>` component; for now the detail page links to `/quotes` for editing.
+#### ~~B.1a — URL search params + tag filter on `QuotesPage`~~ _(shipped)_
+
+- `QuotesPage` filter and pagination state (`category_id`, `author_id`, `tag_id`, `title`, `offset`) is now **derived directly** from `useSearchParams` — the URL is the actual source of truth, not a mirror of local state. Browser back/forward, programmatic `navigate('?…')`, and deep links from `QuoteDetailPage` all flow into the list with zero hydration glue. The only piece of local state left is `titleInput`, the editable draft for the search box; a debounced effect commits it into `?title` (and resets `?offset`) once the user stops typing, and a sibling effect syncs the draft back to `appliedTitle` whenever `?title` changes externally so the search box reflects the active filter on back/forward.
+- All filter and pager mutations go through a single `updateSearchParams(mutator)` helper that calls `setSearchParams(..., { replace: true })`, so the back stack stays clean and concurrent updates never race over a stale snapshot of the URL. Empty values are deleted from the URL rather than serialized as `&category_id=&tag_id=`, keeping shareable links readable.
+- `parseOffsetParam` enforces a strict `/^\d+$/` match on the whole string so tampered or surprising values like `?offset=-1`, `?offset=20foo`, `?offset=3.14`, `?offset=1e2`, or `?offset=+5` all clamp to `0`. `Number.parseInt`'s lenient "consume-leading-digits" behavior is **not** sufficient on its own — a regex is the only way to enforce the documented contract.
+- `listQuotes({ tagId })` plumbs through to the new backend `?tag_id=` filter (Logos hashed semi-join — coordinated server-side change, see Logos `12-pr-review-lessons.mdc`). A plain `<select>` tag picker — populated by the existing `["tags", "all"]` query, so opening the per-row tag editor on the same view does not refetch — sits next to the Category filter in the toolbar.
+- When a deep-link's `?tag_id` references a tag that the picker no longer lists, the controlled `<select>` renders a synthetic disabled `(deleted tag)` option so it stays in sync with the active filter — **only when** `listAllTags()` was exhaustive (`!truncated`). The helper caps at 500 items, so under truncation a valid deep link to a tag past the cap would otherwise be mislabeled as deleted; in that case we render no sentinel and the controlled `<select>` falls back to the placeholder visually while `tagFilterId` continues to drive the API call correctly.
+- `tagFilterId` was threaded through the list query key, the delete-mutation `stillOnSameView` comparison, `clearFilters`, and `hasActiveFilter` so every existing invariant continues to hold. The delete-onSuccess clamp now `flushSync`s a `setSearchParams` transition (instead of a `setOffset` state update) so the dependent list query key is committed before `invalidateQueries` triggers the refetch — otherwise the refetch would go out with the stale offset.
+- Tests: 10 new specs in `QuotesPage.test.tsx` cover URL hydration → first `listQuotes` call; the `?offset=-1` clamp and the strict-integer rejection of `20foo` / `3.14` / `1e2` / `+5`; `replace`-only mirroring (pristine URL stays pristine until a filter is touched); the "Clear filters" path stripping every param off the URL; the `(deleted tag)` sentinel for missing tag deep links; the **non-rendering of the sentinel when the tag corpus is truncated**; the tag-filter dropdown driving both the API call and the URL; **search-only navigation while QuotesPage stays mounted** firing a fresh `listQuotes` with the new filters; and the editable search-box draft syncing to `?title` on external navigation. Total suite: **146/146 passing**. ESLint, `tsc --noEmit`, and `vite build` clean.
+
+#### B.1b — Deep links from `QuoteDetailPage` _(next)_
+
+- Add "Open list with this author" / "Open list with this tag" links from `QuoteDetailPage` pointing at `/quotes?author_id=…` / `/quotes?tag_id=…`. Now unblocked by B.1a.
+
+#### B.1c — Extract `<QuoteForm>` and inline edit on the detail page _(after B.1b)_
+
+- Pull the create / inline-edit form out of `QuotesPage` into `src/components/QuoteForm.tsx` (`mode: "create" | "edit"`), wire `QuotesPage` to use it for both flows, then add an `Edit` mode to `QuoteDetailPage` that uses the same component. Largest of the three; worth its own PR so the form extraction can be reviewed independently from the detail-page wiring.
 
 ### ~~Phase C — Global polish~~ _(shipped)_
 

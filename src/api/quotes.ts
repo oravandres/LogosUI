@@ -13,6 +13,11 @@ export type ListQuotesParams = {
   authorId?: string;
   /** When empty, `category_id` is not sent. */
   categoryId?: string;
+  /**
+   * When empty, `tag_id` is not sent. Server filters by exact tag association
+   * (hashed semi-join); applies on top of the other filters.
+   */
+  tagId?: string;
   /** Substring match on title (server uses ILIKE). */
   title?: string;
   signal?: AbortSignal;
@@ -31,6 +36,9 @@ export function listQuotes(
   }
   if (params.categoryId && params.categoryId.trim() !== "") {
     search.set("category_id", params.categoryId.trim());
+  }
+  if (params.tagId && params.tagId.trim() !== "") {
+    search.set("tag_id", params.tagId.trim());
   }
   const title = params.title?.trim() ?? "";
   if (title !== "") {

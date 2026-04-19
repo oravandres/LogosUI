@@ -5,6 +5,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -13,7 +14,7 @@ import {
   type ReactNode,
 } from "react";
 import { flushSync } from "react-dom";
-import { Link } from "react-router";
+import { Link, useSearchParams } from "react-router";
 import { ApiError } from "@/api/client";
 import { listAllCategoriesByType } from "@/api/categories";
 import { getImage, listImages } from "@/api/images";
@@ -47,6 +48,7 @@ type DeleteQuoteVars = {
   pageOffset: number;
   categoryFilterId: string;
   authorFilterId: string;
+  tagFilterId: string;
   titleSearch: string;
 };
 
@@ -55,18 +57,127 @@ type UpdateQuoteVars = {
   body: QuoteWriteBody;
 };
 
+/**
+ * Parse a non-negative integer from a URL search param. Returns `0` for
+ * missing / non-integer / negative values so a tampered `?offset=-1`,
+ * `?offset=foo`, `?offset=20foo`, `?offset=3.14`, or `?offset=1e2` cannot
+ * put the list into an invalid state.
+ *
+ * We deliberately do **not** rely on `Number.parseInt`'s lenient
+ * "consume-leading-digits" behavior — a strict regex match on the whole
+ * string is the only way to enforce the documented contract.
+ */
+function parseOffsetParam(raw: string | null): number {
+  if (raw === null || !/^\d+$/.test(raw)) return 0;
+  const n = Number.parseInt(raw, 10);
+  if (!Number.isFinite(n)) return 0;
+  return n;
+}
+
 export function QuotesPage() {
   const queryClient = useQueryClient();
   const toast = useToast();
-  const [categoryFilterId, setCategoryFilterId] = useState("");
-  const [authorFilterId, setAuthorFilterId] = useState("");
-  const [titleInput, setTitleInput] = useState("");
-  const [appliedTitle, setAppliedTitle] = useState("");
-  const [offset, setOffset] = useState(0);
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  // URL search params are the actual source of truth — derived directly,
+  // not mirrored from local state — so browser back/forward, programmatic
+  // `navigate('?…')`, and deep links from QuoteDetailPage all flow into the
+  // list without any hydration effect to keep in sync.
+  const categoryFilterId = searchParams.get("category_id") ?? "";
+  const authorFilterId = searchParams.get("author_id") ?? "";
+  const tagFilterId = searchParams.get("tag_id") ?? "";
+  const appliedTitle = searchParams.get("title") ?? "";
+  const offset = parseOffsetParam(searchParams.get("offset"));
+
+  // Editable draft for the search box — stays in local state so each
+  // keystroke does not roundtrip through the URL. The debounced effect
+  // below commits it into `?title` once the user stops typing.
+  const [titleInput, setTitleInput] = useState(() => appliedTitle);
 
   const [imagePickerArmed, setImagePickerArmed] = useState(false);
 
-  const lastAppliedTitleRef = useRef("");
+  /**
+   * Latches the URL string we last wrote ourselves so the resync effect
+   * below can distinguish "we just committed this" from "the URL changed
+   * underneath us" (back/forward, sidebar link, deep link, programmatic
+   * `navigate('?…')`). Initialized to `null` so the very first render after
+   * mount is treated as external — that's harmless because `titleInput`'s
+   * initializer already seeded it from `appliedTitle`.
+   */
+  const lastSelfWrittenSearchRef = useRef<string | null>(null);
+
+  /**
+   * Centralized setter that mutates the current URL search params with
+   * `replace: true` so the back stack does not collect a history entry per
+   * filter change or per keystroke. Empty values are deleted (rather than
+   * set to `""`) so the URL stays clean.
+   *
+   * Pass a mutator callback rather than a fully constructed
+   * `URLSearchParams` so concurrent updates never race over a stale
+   * snapshot of the URL. Records the resulting string into
+   * `lastSelfWrittenSearchRef` so the resync effect can recognize self
+   * writes and skip clobbering the editable draft on its own commits.
+   */
+  const updateSearchParams = useCallback(
+    (mutator: (next: URLSearchParams) => void) => {
+      setSearchParams(
+        (current) => {
+          const next = new URLSearchParams(current);
+          mutator(next);
+          lastSelfWrittenSearchRef.current = next.toString();
+          return next;
+        },
+        { replace: true }
+      );
+    },
+    [setSearchParams]
+  );
+
+  /**
+   * Tracks the `?title` value we last committed via the debounce / handler
+   * paths so the debounce effect can bail when the in-flight draft already
+   * matches the current URL (e.g. after we already pushed `?title=foo` on a
+   * previous tick and `titleInput` is still `"foo"`).
+   */
+  const lastAppliedTitleRef = useRef(appliedTitle);
+
+  /**
+   * Resync the editable search-box draft on **any** external URL change —
+   * not just `?title` changes. This closes a debounce/navigation race
+   * where:
+   *
+   *   1. User types `sto` into the search box (`titleInput = "sto"`,
+   *      `appliedTitle = ""`).
+   *   2. Before the 400 ms debounce fires they navigate to a deep link
+   *      whose `?title` value is the same (commonly: still missing).
+   *   3. Old behavior gated this effect on `appliedTitle`, so the stale
+   *      draft and its pending timer survived; the timer then appended
+   *      `?title=sto` onto the freshly navigated URL — a user-visible leak.
+   *
+   * Snapping `titleInput` here triggers the debounce effect's `[titleInput]`
+   * cleanup, which clears the pending timer outright; the new timer
+   * scheduled afterwards immediately bails because draft == latch. Self
+   * writes (debounced commit, filter handlers, pager, delete `onSuccess`)
+   * pre-record their resulting URL into `lastSelfWrittenSearchRef`, so this
+   * effect skips them and does not clobber the user's typing on every
+   * round-trip.
+   *
+   * Self-write detection has to compare the *string* — `URLSearchParams`
+   * instance equality cannot be relied on across renders.
+   */
+  useEffect(() => {
+    const currentSearch = searchParams.toString();
+    if (lastSelfWrittenSearchRef.current === currentSearch) {
+      return;
+    }
+    lastSelfWrittenSearchRef.current = currentSearch;
+    lastAppliedTitleRef.current = appliedTitle;
+    setTitleInput(appliedTitle);
+  }, [searchParams, appliedTitle]);
+
+  // Debounced commit of the editable draft into `?title`. Resetting
+  // `?offset` in the same URL transition (rather than a separate effect)
+  // avoids the extra `listQuotes` call with the stale offset.
   useEffect(() => {
     const t = window.setTimeout(() => {
       const next = titleInput.trim();
@@ -74,28 +185,41 @@ export function QuotesPage() {
         return;
       }
       lastAppliedTitleRef.current = next;
-      setOffset(0);
-      setAppliedTitle(next);
+      updateSearchParams((p) => {
+        if (next) p.set("title", next);
+        else p.delete("title");
+        p.delete("offset");
+      });
     }, SEARCH_DEBOUNCE_MS);
     return () => window.clearTimeout(t);
-  }, [titleInput]);
+  }, [titleInput, updateSearchParams]);
 
   const listContextRef = useRef({
     offset,
     categoryFilterId,
     authorFilterId,
+    tagFilterId,
     titleSearch: appliedTitle,
   });
   listContextRef.current = {
     offset,
     categoryFilterId,
     authorFilterId,
+    tagFilterId,
     titleSearch: appliedTitle,
   };
 
   const quoteCategoriesQuery = useQuery({
     queryKey: ["categories", "picker", "quote"],
     queryFn: ({ signal }) => listAllCategoriesByType("quote", signal),
+    staleTime: 60_000,
+  });
+
+  // Shared with the per-row tag editor (`["tags", "all"]`) so opening the
+  // editor on the same view does not refetch the whole tag corpus.
+  const tagsPickerQuery = useQuery({
+    queryKey: ["tags", "all"],
+    queryFn: ({ signal }) => listAllTags(signal),
     staleTime: 60_000,
   });
 
@@ -108,10 +232,29 @@ export function QuotesPage() {
   });
 
   const quoteCategoryOptions = quoteCategoriesQuery.data ?? [];
+  const tagFilterOptions = tagsPickerQuery.data?.items ?? [];
   const imageOptions = useMemo(
     () => imagesPickerQuery.data?.items ?? [],
     [imagesPickerQuery.data]
   );
+
+  // Defense in depth: if the URL deep-link carries a `?tag_id=` whose tag
+  // has been deleted in the meantime, we still need a stable label so the
+  // active-filter pill renders something the user can clear.
+  //
+  // We can only confidently call a tag "deleted" when `listAllTags()` was
+  // exhaustive — the helper is capped at 500 items and reports `truncated`
+  // when the corpus is larger. Treating absence as deletion under truncation
+  // would mislabel valid deep links to tags past the cap (e.g. an
+  // organization with thousands of tags); in that case we render no
+  // sentinel and the controlled `<select>` falls back to the placeholder
+  // visually while `tagFilterId` continues to drive the API call correctly.
+  const tagsCorpusExhaustive =
+    tagsPickerQuery.isSuccess && !(tagsPickerQuery.data?.truncated ?? true);
+  const tagFilterMissing =
+    tagFilterId !== "" &&
+    tagsCorpusExhaustive &&
+    !tagFilterOptions.some((t) => t.id === tagFilterId);
 
   const listQuery = useQuery({
     queryKey: [
@@ -119,6 +262,7 @@ export function QuotesPage() {
       {
         categoryFilterId,
         authorFilterId,
+        tagFilterId,
         titleSearch: appliedTitle,
         offset,
       },
@@ -129,6 +273,7 @@ export function QuotesPage() {
         offset,
         categoryId: categoryFilterId,
         authorId: authorFilterId,
+        tagId: tagFilterId,
         title: appliedTitle,
         signal,
       }),
@@ -175,11 +320,18 @@ export function QuotesPage() {
         ctx.offset === vars.pageOffset &&
         ctx.categoryFilterId === vars.categoryFilterId &&
         ctx.authorFilterId === vars.authorFilterId &&
+        ctx.tagFilterId === vars.tagFilterId &&
         ctx.titleSearch === vars.titleSearch;
       if (vars.onlyRowOnPage && vars.pageOffset > 0 && stillOnSameView) {
         const next = Math.max(0, vars.pageOffset - QUOTES_PAGE_SIZE);
+        // `flushSync` ensures the URL transition (and the dependent list
+        // query key) is committed before `invalidateQueries` triggers the
+        // refetch — otherwise the refetch goes out with the stale offset.
         flushSync(() => {
-          setOffset(next);
+          updateSearchParams((p) => {
+            if (next > 0) p.set("offset", String(next));
+            else p.delete("offset");
+          });
         });
       }
       await queryClient.invalidateQueries({ queryKey: ["quotes"] });
@@ -203,17 +355,24 @@ export function QuotesPage() {
   };
 
   const clearFilters = () => {
-    setCategoryFilterId("");
-    setAuthorFilterId("");
+    // Clearing the editable draft and the latched "last committed" marker
+    // alongside the URL transition prevents the debounce effect from
+    // firing a redundant follow-up commit with the now-empty value.
     setTitleInput("");
-    setAppliedTitle("");
     lastAppliedTitleRef.current = "";
-    setOffset(0);
+    updateSearchParams((p) => {
+      p.delete("category_id");
+      p.delete("author_id");
+      p.delete("tag_id");
+      p.delete("title");
+      p.delete("offset");
+    });
   };
 
   const hasActiveFilter =
     categoryFilterId !== "" ||
     authorFilterId !== "" ||
+    tagFilterId !== "" ||
     appliedTitle !== "";
 
   // Inline edit state
@@ -330,13 +489,27 @@ export function QuotesPage() {
     : false;
 
   const onCategoryFilterChange = (next: string) => {
-    setCategoryFilterId(next);
-    setOffset(0);
+    updateSearchParams((p) => {
+      if (next) p.set("category_id", next);
+      else p.delete("category_id");
+      p.delete("offset");
+    });
   };
 
   const onAuthorFilterChange = (next: string) => {
-    setAuthorFilterId(next);
-    setOffset(0);
+    updateSearchParams((p) => {
+      if (next) p.set("author_id", next);
+      else p.delete("author_id");
+      p.delete("offset");
+    });
+  };
+
+  const onTagFilterChange = (next: string) => {
+    updateSearchParams((p) => {
+      if (next) p.set("tag_id", next);
+      else p.delete("tag_id");
+      p.delete("offset");
+    });
   };
 
   const onSubmitCreate = (e: FormEvent<HTMLFormElement>) => {
@@ -530,6 +703,35 @@ export function QuotesPage() {
                 {quoteCategoryOptions.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="field inline">
+              <span className="field-label">Tag</span>
+              <select
+                className="input input-compact"
+                value={tagFilterId}
+                onChange={(ev) => onTagFilterChange(ev.target.value)}
+                disabled={tagsPickerQuery.isPending}
+                aria-label="Filter by tag"
+              >
+                <option value="">All tags</option>
+                {/*
+                  When the URL deep-link references a tag that no longer
+                  exists, render a synthetic disabled option so the
+                  controlled <select> still reflects the active filter
+                  (otherwise React resets the value to the placeholder
+                  silently and the user can't tell why the list is empty).
+                */}
+                {tagFilterMissing ? (
+                  <option value={tagFilterId} disabled>
+                    (deleted tag)
+                  </option>
+                ) : null}
+                {tagFilterOptions.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name}
                   </option>
                 ))}
               </select>
@@ -797,6 +999,7 @@ export function QuotesPage() {
                                     pageOffset: offset,
                                     categoryFilterId,
                                     authorFilterId,
+                                    tagFilterId,
                                     titleSearch: appliedTitle,
                                   });
                                 }
@@ -836,9 +1039,13 @@ export function QuotesPage() {
                   type="button"
                   className="btn"
                   disabled={!canPrev}
-                  onClick={() =>
-                    setOffset((o) => Math.max(0, o - QUOTES_PAGE_SIZE))
-                  }
+                  onClick={() => {
+                    const next = Math.max(0, offset - QUOTES_PAGE_SIZE);
+                    updateSearchParams((p) => {
+                      if (next > 0) p.set("offset", String(next));
+                      else p.delete("offset");
+                    });
+                  }}
                 >
                   Previous
                 </button>
@@ -846,7 +1053,12 @@ export function QuotesPage() {
                   type="button"
                   className="btn"
                   disabled={!canNext}
-                  onClick={() => setOffset((o) => o + QUOTES_PAGE_SIZE)}
+                  onClick={() => {
+                    const next = offset + QUOTES_PAGE_SIZE;
+                    updateSearchParams((p) =>
+                      p.set("offset", String(next))
+                    );
+                  }}
                 >
                   Next
                 </button>
