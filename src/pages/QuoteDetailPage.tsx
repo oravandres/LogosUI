@@ -341,6 +341,15 @@ function AuthorBlock({
                   {formatLifeSpan(author.born_date, author.died_date)}
                 </p>
               ) : null}
+              <p className="author-actions">
+                <Link
+                  className="link-quiet"
+                  to={listLink({ author_id: author.id })}
+                  aria-label={`View all quotes by ${author.name}`}
+                >
+                  View all quotes by this author →
+                </Link>
+              </p>
             </>
           ) : null}
         </div>
@@ -379,12 +388,34 @@ function TagList({
   return (
     <ul className="tag-chip-list tag-chip-list-readonly">
       {tags.map((t) => (
-        <li key={t.id} className="tag-chip tag-chip-static">
-          {t.name}
+        <li key={t.id}>
+          <Link
+            className="tag-chip tag-chip-link"
+            to={listLink({ tag_id: t.id })}
+            aria-label={`View all quotes tagged "${t.name}"`}
+          >
+            {t.name}
+          </Link>
         </li>
       ))}
     </ul>
   );
+}
+
+/**
+ * Build a deep link into the quotes list with a single filter applied.
+ *
+ * Routes the value through `URLSearchParams` so opaque ids — which are
+ * usually UUIDs but the API treats them as opaque strings — are encoded
+ * defensively. Always points at `/quotes` so the destination is stable
+ * across nested routes.
+ */
+function listLink(params: { author_id?: string; tag_id?: string }): string {
+  const search = new URLSearchParams();
+  if (params.author_id) search.set("author_id", params.author_id);
+  if (params.tag_id) search.set("tag_id", params.tag_id);
+  const qs = search.toString();
+  return qs ? `/quotes?${qs}` : "/quotes";
 }
 
 function QuoteDetailSkeleton() {
