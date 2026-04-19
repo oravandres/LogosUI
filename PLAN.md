@@ -24,7 +24,6 @@ This document tracks what is done, what is next, and how we get the UI deployed 
 
 What is **not** shipped:
 
-- The MiMi-side `manifests/logos-ui/`, the shared ingress, the Kyverno-policy namespace extension, and the Argo CD `Application` are drafted on the MiMi branch `feat/logos-ui-deployment` (Sections 4.3–4.6 below) and pinned to image tag `db27061` (the first GHCR build off `main` after the dockerization PR merged). PR pending review.
 - No global search.
 
 ---
@@ -147,9 +146,9 @@ Right now the backend lives at `https://logos.mimi.local/api/v1`. The UI is not 
   - Job `container` (`needs: test-and-build`): always builds the image for `linux/amd64` with `--load` and runs a real smoke test against the running container — non-root UID 101, `index.html` cache + security headers, SPA fallback for deep links, exactly one `Cache-Control: immutable` line on hashed assets, and `/assets/missing.js` returning 404 (no fallthrough to the HTML shell). The smoke test catches Dockerfile / nginx regressions at PR time. On `push: main` the same job then builds multi-arch (`linux/amd64,linux/arm64`) and pushes to GHCR using `docker/login-action@v3` with `${{ secrets.GITHUB_TOKEN }}` and a short-SHA tag from `docker/metadata-action@v5`. Multi-arch is mandatory because the cluster mixes amd64 with Raspberry Pi arm64 nodes; a single-platform tag would fail rollouts on arm64 with `no match for platform in manifest` (workspace rule `12-pr-review-lessons.mdc`). buildx `cache-from`/`cache-to: type=gha` keeps the second build incremental.
 - Image repo: `ghcr.io/oravandres/logosui/logos-ui`.
 
-### ~~4.3 MiMi manifests — new `logos-ui` namespace~~ _(in flight)_
+### ~~4.3 MiMi manifests — new `logos-ui` namespace~~ _(shipped)_
 
-Drafted on MiMi branch `feat/logos-ui-deployment`. A separate namespace (not a shared `logos`) keeps the failure domain clean and means the UI's quota doesn't squeeze the API. The namespace inherits the same baseline controls as every other namespace in the cluster (Namespace with `pod-security.kubernetes.io/enforce: restricted`, ResourceQuota, LimitRange — see `rules/12-pr-review-lessons.mdc`) and is added to all five existing Kyverno `ClusterPolicy` namespace selectors so the cluster's safety gates apply uniformly.
+Landed on MiMi `main` via PR #3 (`feat/logos-ui-deployment`, two commits — initial scaffold then a follow-up that drops the projected ServiceAccount token and closes the pod-security override gaps the Kyverno review surfaced). A separate namespace (not a shared `logos`) keeps the failure domain clean and means the UI's quota doesn't squeeze the API. The namespace inherits the same baseline controls as every other namespace in the cluster (Namespace with `pod-security.kubernetes.io/enforce: restricted`, ResourceQuota, LimitRange — see `rules/12-pr-review-lessons.mdc`) and is added to all five existing Kyverno `ClusterPolicy` namespace selectors so the cluster's safety gates apply uniformly.
 
 | File | Purpose |
 |------|---------|
@@ -162,7 +161,7 @@ Drafted on MiMi branch `feat/logos-ui-deployment`. A separate namespace (not a s
 
 No Secrets / SealedSecrets needed — static bundles carry no secrets (rule in `AGENTS.md`).
 
-### ~~4.4 Ingress — sibling Ingress on the shared host~~ _(in flight)_
+### ~~4.4 Ingress — sibling Ingress on the shared host~~ _(shipped)_
 
 Took option (b) from §7: a sibling `manifests/logos-ui/ingress.yaml` in the new namespace, leaving `manifests/logos/ingress.yaml` untouched. Each namespace owns its own Ingress, so GitOps diffs and PSS / Kyverno boundaries stay clean. cert-manager issues a separate `logos-ui-tls` Secret for the same hostname (Secrets cannot cross namespaces); both certs are signed by the internal CA and Traefik picks either for SNI. The effective routing collapses to the same shape:
 
@@ -190,11 +189,11 @@ Traefik evaluates more specific prefixes first, so `/api/v1` continues to hit th
 
 The ingress is annotated with `cert-manager.io/cluster-issuer: mimi-internal-ca` — no change.
 
-### 4.5 CORS — shrink to dev-only
+### ~~4.5 CORS — shrink to dev-only~~ _(shipped)_
 
-Because production is same-origin, the API's `CORS_ALLOWED_ORIGINS` env var only needs to cover local dev origins (`http://localhost:5173,http://127.0.0.1:5173`). No change needed — that's what it already is. Document this explicitly in the UI README so no one widens it casually.
+Because production is same-origin, the API's `CORS_ALLOWED_ORIGINS` env var only needs to cover local dev origins (`http://localhost:5173,http://127.0.0.1:5173`) — which is what it already is on the cluster. Documented in `README.md` §"Deployment" with an explicit "do not widen to bake the prod origin in" warning so the same-origin invariant doesn't get silently undone.
 
-### ~~4.6 Argo CD Application~~ _(in flight)_
+### ~~4.6 Argo CD Application~~ _(shipped)_
 
 `manifests/argocd-apps/logos-ui-app.yaml` mirrors `logos-app.yaml`:
 
@@ -208,8 +207,16 @@ Because production is same-origin, the API's `CORS_ALLOWED_ORIGINS` env var only
 
 1. ~~Merge this plan doc + scaffolding PR.~~ _(shipped: Phases A–C, plan doc on `main`.)_
 2. ~~PR: add `Dockerfile`, `deploy/nginx.conf`, `.github/workflows/ci.yml`. CI validates on every push; the first `main` push after merge publishes `ghcr.io/oravandres/logosui/logos-ui:<sha>`.~~ _(shipped, GHCR tag `db27061`.)_
-3. ~~PR to MiMi: add `manifests/logos-ui/*` with `image: ghcr.io/oravandres/logosui/logos-ui:db27061` pinned to the SHA from step 2, add a sibling ingress in `manifests/logos-ui/`, add `manifests/argocd-apps/logos-ui-app.yaml`, and extend the five Kyverno `ClusterPolicy` namespace selectors to cover `logos-ui`.~~ _(in flight: MiMi branch `feat/logos-ui-deployment`; `yamllint` + `kubeconform` clean.)_
-4. **Next:** verify in-cluster after MiMi PR merges and Argo CD syncs: `https://logos.mimi.local/` loads the SPA; `https://logos.mimi.local/api/v1/health` still returns `{"status":"healthy"}`; deep links (`/quotes`, `/authors/...`) resolve via the SPA fallback.
+3. ~~PR to MiMi: add `manifests/logos-ui/*` with `image: ghcr.io/oravandres/logosui/logos-ui:db27061` pinned to the SHA from step 2, add a sibling ingress in `manifests/logos-ui/`, add `manifests/argocd-apps/logos-ui-app.yaml`, and extend the five Kyverno `ClusterPolicy` namespace selectors to cover `logos-ui`.~~ _(shipped: MiMi PR #3 merged to `main`; `yamllint` + `kubeconform` clean; Kyverno-review follow-up dropped the projected ServiceAccount token and tightened the pod-security overrides.)_
+4. ~~Verify in-cluster after MiMi PR merges and Argo CD syncs: `https://logos.mimi.local/` loads the SPA; `https://logos.mimi.local/api/v1/health` still returns `{"status":"healthy"}`; deep links (`/quotes`, `/authors/...`) resolve via the SPA fallback.~~ _(shipped.)_ Verified against the live cluster via `curl --resolve logos.mimi.local:443:192.168.1.80`:
+    - `Application/logos-ui` → `Synced`, last operation `Succeeded`. The Argo `Application` reports `Progressing` overall because the `Ingress` resource has no controller-published `.status.loadBalancer.ingress[].hostname` (Traefik on K3s never sets it), but every child resource (`Deployment`, `Service`, `PDB`, `Namespace`, `LimitRange`, `ResourceQuota`) is `Synced`+`Healthy`. Cosmetic; not actionable.
+    - `Deployment/logos-ui` → `2/2` ready, image `ghcr.io/oravandres/logosui/logos-ui:db27061`, pods spread across `pi-n1`/`pi-n2` per the `topologySpreadConstraints`.
+    - `Certificate/logos-ui-tls` → `Ready=True`, signed by `mimi-internal-ca`, separate from `logos-tls` as called out in §4.4.
+    - `GET /` → `200`, SPA shell, `cache-control: no-store`, `x-content-type-options: nosniff`, `x-frame-options: DENY`, `referrer-policy: no-referrer`.
+    - `GET /api/v1/health` → `200 {"status":"healthy"}` — Traefik continues to route `/api/v1` to `logos-api` ahead of the UI's `/` rule, confirming the sibling-Ingress design from §4.4 works as intended.
+    - `GET /quotes` (deep link) → `200`, SPA fallback, `cache-control: no-store`.
+    - `GET /assets/index-*.js` → `200`, `cache-control: public, max-age=31536000, immutable` (single line — the §4.1 nginx repeat-headers fix held up).
+    - `GET /assets/missing.js` → `404` (no fallthrough to the HTML shell — the invariant the CI smoke test guards is preserved end-to-end).
 5. Version bumps afterwards are single-line image tag changes in MiMi, driven by GHCR builds from this repo.
 
 ---
