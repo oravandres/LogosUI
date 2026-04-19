@@ -1,12 +1,22 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { ApiError } from "@/api/client";
 import { getAuthor } from "@/api/authors";
 import { getCategory } from "@/api/categories";
 import { getImage } from "@/api/images";
-import { deleteQuote, getQuote } from "@/api/quotes";
+import { deleteQuote, getQuote, updateQuote } from "@/api/quotes";
 import { listQuoteTags } from "@/api/tags";
-import type { Author, Category, Image, Quote, Tag } from "@/api/types";
+import type {
+  Author,
+  Category,
+  Image,
+  Quote,
+  QuoteWriteBody,
+  Tag,
+} from "@/api/types";
+import { QuoteForm } from "@/components/QuoteForm";
+import { quoteToFormValues } from "@/components/quoteForm.helpers";
 import { Skeleton } from "@/components/Skeleton";
 import { useToast } from "@/components/useToast";
 
@@ -76,6 +86,36 @@ export function QuoteDetailPage() {
     staleTime: 30_000,
   });
 
+  const [isEditing, setIsEditing] = useState(false);
+  const [updateError, setUpdateError] = useState<string | null>(null);
+
+  const updateMutation = useMutation({
+    mutationFn: (body: QuoteWriteBody) => updateQuote(id, body),
+    onSuccess: async (updated) => {
+      // Write the fresh quote into cache directly so the read-mode panels
+      // re-render against the updated state on the same tick we exit edit
+      // mode, without waiting for a roundtrip on `["quote", id]`. The
+      // downstream resolver queries (`["author", new]`, `["image", new]`,
+      // `["category", new]`) auto-refire because their query keys change
+      // when the quote's foreign-key ids change.
+      queryClient.setQueryData(["quote", id], updated);
+      // List view + dashboard need to reflect the new title / classification
+      // the next time the user navigates back to them.
+      await queryClient.invalidateQueries({ queryKey: ["quotes"] });
+      await queryClient.invalidateQueries({ queryKey: ["home"] });
+      setUpdateError(null);
+      setIsEditing(false);
+      toast.success(`Quote "${updated.title}" updated`);
+    },
+    onError: (err) => {
+      // The form renders this inline (alongside any local validation
+      // error) via its `submitError` prop; the toast is for users whose
+      // attention is elsewhere on the page when the save fails.
+      setUpdateError(err instanceof ApiError ? err.message : String(err));
+      toast.error("Could not update quote", err);
+    },
+  });
+
   const deleteMutation = useMutation({
     mutationFn: () => deleteQuote(id),
     onSuccess: async () => {
@@ -132,29 +172,44 @@ export function QuoteDetailPage() {
         <>
           <header className="quote-detail-header">
             <h2>{quote.title}</h2>
-            <div className="btn-group">
-              <Link
-                to="/quotes"
-                className="btn btn-small"
-                aria-label={`Edit ${quote.title} from the list`}
-              >
-                Edit in list
-              </Link>
-              <button
-                type="button"
-                className="btn btn-small btn-danger"
-                disabled={deleteMutation.isPending}
-                onClick={() => {
-                  if (
-                    window.confirm(`Delete quote "${quote.title}"?`)
-                  ) {
-                    deleteMutation.mutate();
-                  }
-                }}
-              >
-                {deleteMutation.isPending ? "Deleting…" : "Delete"}
-              </button>
-            </div>
+            {/*
+             * Edit / Delete are hidden while editing because the form has
+             * its own Save / Cancel button bar — surfacing both at once
+             * would let the user click Edit twice or Delete the row
+             * mid-edit, both of which are user traps. The h2 stays so
+             * the screen-reader page heading and the visible context
+             * don't disappear when entering edit mode.
+             */}
+            {!isEditing ? (
+              <div className="btn-group">
+                <button
+                  type="button"
+                  className="btn btn-small"
+                  disabled={deleteMutation.isPending}
+                  onClick={() => {
+                    setUpdateError(null);
+                    setIsEditing(true);
+                  }}
+                  aria-label={`Edit ${quote.title}`}
+                >
+                  Edit
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-small btn-danger"
+                  disabled={deleteMutation.isPending}
+                  onClick={() => {
+                    if (
+                      window.confirm(`Delete quote "${quote.title}"?`)
+                    ) {
+                      deleteMutation.mutate();
+                    }
+                  }}
+                >
+                  {deleteMutation.isPending ? "Deleting…" : "Delete"}
+                </button>
+              </div>
+            ) : null}
           </header>
 
           {deleteMutation.error ? (
@@ -163,89 +218,116 @@ export function QuoteDetailPage() {
             </p>
           ) : null}
 
-          <article className="panel quote-body">
-            <p className="quote-text">{quote.text}</p>
-          </article>
-
-          <AuthorBlock
-            quoteAuthorId={quote.author_id}
-            author={author}
-            authorState={summarize(authorQuery)}
-            portrait={portrait}
-            portraitErrored={portraitQuery.isError}
-          />
-
-          {quoteImageId ? (
+          {isEditing ? (
             <div className="panel">
-              <h3 className="panel-title">Image</h3>
-              {quoteImageQuery.isPending ? (
-                <Skeleton
-                  variant="rect"
-                  width="100%"
-                  height="12rem"
-                  ariaLabel="Loading image"
-                  block
-                />
-              ) : quoteImage ? (
-                <figure className="quote-image">
-                  <img
-                    className="quote-image-img"
-                    src={quoteImage.url}
-                    alt={quoteImage.alt_text ?? ""}
-                  />
-                  {quoteImage.alt_text ? (
-                    <figcaption className="muted">
-                      {quoteImage.alt_text}
-                    </figcaption>
-                  ) : null}
-                </figure>
-              ) : (
-                <p className="muted">
-                  Image reference{" "}
-                  <code className="id-chip">{quoteImageId}</code> could not be
-                  loaded.
-                </p>
-              )}
+              <h3 className="panel-title">Edit quote</h3>
+              <QuoteForm
+                mode="edit"
+                initialValues={quoteToFormValues(quote)}
+                isSubmitting={updateMutation.isPending}
+                submitError={updateError}
+                quoteTitleForA11y={quote.title}
+                onSubmit={(body) => updateMutation.mutate(body)}
+                onCancel={() => {
+                  setIsEditing(false);
+                  setUpdateError(null);
+                }}
+              />
             </div>
-          ) : null}
+          ) : (
+            <>
+              <article className="panel quote-body">
+                <p className="quote-text">{quote.text}</p>
+              </article>
 
-          <div className="panel">
-            <h3 className="panel-title">Classification</h3>
-            <dl className="meta-list">
-              <div className="meta-row">
-                <dt>Category</dt>
-                <dd>
-                  {!categoryId ? (
-                    <span className="muted">None</span>
-                  ) : categoryQuery.isPending ? (
-                    <Skeleton width="6rem" height="1rem" ariaLabel="Loading category" />
-                  ) : category ? (
-                    <span className="tag-chip tag-chip-static">
-                      {category.name}
-                    </span>
+              <AuthorBlock
+                quoteAuthorId={quote.author_id}
+                author={author}
+                authorState={summarize(authorQuery)}
+                portrait={portrait}
+                portraitErrored={portraitQuery.isError}
+              />
+
+              {quoteImageId ? (
+                <div className="panel">
+                  <h3 className="panel-title">Image</h3>
+                  {quoteImageQuery.isPending ? (
+                    <Skeleton
+                      variant="rect"
+                      width="100%"
+                      height="12rem"
+                      ariaLabel="Loading image"
+                      block
+                    />
+                  ) : quoteImage ? (
+                    <figure className="quote-image">
+                      <img
+                        className="quote-image-img"
+                        src={quoteImage.url}
+                        alt={quoteImage.alt_text ?? ""}
+                      />
+                      {quoteImage.alt_text ? (
+                        <figcaption className="muted">
+                          {quoteImage.alt_text}
+                        </figcaption>
+                      ) : null}
+                    </figure>
                   ) : (
-                    <code className="id-chip" title="Category lookup failed">
-                      {categoryId}
-                    </code>
+                    <p className="muted">
+                      Image reference{" "}
+                      <code className="id-chip">{quoteImageId}</code> could not
+                      be loaded.
+                    </p>
                   )}
-                </dd>
+                </div>
+              ) : null}
+
+              <div className="panel">
+                <h3 className="panel-title">Classification</h3>
+                <dl className="meta-list">
+                  <div className="meta-row">
+                    <dt>Category</dt>
+                    <dd>
+                      {!categoryId ? (
+                        <span className="muted">None</span>
+                      ) : categoryQuery.isPending ? (
+                        <Skeleton
+                          width="6rem"
+                          height="1rem"
+                          ariaLabel="Loading category"
+                        />
+                      ) : category ? (
+                        <span className="tag-chip tag-chip-static">
+                          {category.name}
+                        </span>
+                      ) : (
+                        <code
+                          className="id-chip"
+                          title="Category lookup failed"
+                        >
+                          {categoryId}
+                        </code>
+                      )}
+                    </dd>
+                  </div>
+                  <div className="meta-row">
+                    <dt>Tags</dt>
+                    <dd>
+                      <TagList query={tagsQuery} />
+                    </dd>
+                  </div>
+                  <div className="meta-row">
+                    <dt>Created</dt>
+                    <dd className="muted">{formatDate(quote.created_at)}</dd>
+                  </div>
+                  <div className="meta-row">
+                    <dt>Updated</dt>
+                    <dd className="muted">{formatDate(quote.updated_at)}</dd>
+                  </div>
+                </dl>
               </div>
-              <div className="meta-row">
-                <dt>Tags</dt>
-                <dd>
-                  <TagList query={tagsQuery} />
-                </dd>
-              </div>
-              <div className="meta-row">
-                <dt>Created</dt>
-                <dd className="muted">{formatDate(quote.created_at)}</dd>
-              </div>
-              <div className="meta-row">
-                <dt>Updated</dt>
-                <dd className="muted">{formatDate(quote.updated_at)}</dd>
-              </div>
-            </dl>
-          </div>
+            </>
+          )}
         </>
       ) : null}
     </section>

@@ -9,26 +9,41 @@ import { QuoteDetailPage } from "./QuoteDetailPage";
 
 const getQuoteMock = vi.fn();
 const deleteQuoteMock = vi.fn();
+const updateQuoteMock = vi.fn();
 const getAuthorMock = vi.fn();
+const listAuthorsMock = vi.fn();
 const getCategoryMock = vi.fn();
+const listAllCategoriesByTypeMock = vi.fn();
 const getImageMock = vi.fn();
+const listImagesMock = vi.fn();
 const listQuoteTagsMock = vi.fn();
 
 vi.mock("@/api/quotes", () => ({
   getQuote: (...args: unknown[]) => getQuoteMock(...args),
   deleteQuote: (...args: unknown[]) => deleteQuoteMock(...args),
+  updateQuote: (...args: unknown[]) => updateQuoteMock(...args),
 }));
 
 vi.mock("@/api/authors", () => ({
   getAuthor: (...args: unknown[]) => getAuthorMock(...args),
+  // AuthorPicker (rendered by <QuoteForm> in edit mode) calls listAuthors
+  // for its searchable dropdown. The default empty page is enough; specific
+  // tests override it when they need a richer corpus.
+  listAuthors: (...args: unknown[]) => listAuthorsMock(...args),
 }));
 
 vi.mock("@/api/categories", () => ({
   getCategory: (...args: unknown[]) => getCategoryMock(...args),
+  // <QuoteForm> populates the category <select> from this endpoint.
+  listAllCategoriesByType: (...args: unknown[]) =>
+    listAllCategoriesByTypeMock(...args),
 }));
 
 vi.mock("@/api/images", () => ({
   getImage: (...args: unknown[]) => getImageMock(...args),
+  // <QuoteForm>'s image picker arms on focus (or eagerly when editing a
+  // quote that already has an image).
+  listImages: (...args: unknown[]) => listImagesMock(...args),
 }));
 
 vi.mock("@/api/tags", () => ({
@@ -117,10 +132,24 @@ describe("QuoteDetailPage", () => {
   beforeEach(() => {
     getQuoteMock.mockResolvedValue(quote());
     getAuthorMock.mockResolvedValue(author());
+    listAuthorsMock.mockResolvedValue({
+      items: [author()],
+      total: 1,
+      offset: 0,
+      limit: 20,
+    });
     getCategoryMock.mockResolvedValue(category());
+    listAllCategoriesByTypeMock.mockResolvedValue([category()]);
     getImageMock.mockResolvedValue(image());
+    listImagesMock.mockResolvedValue({
+      items: [],
+      total: 0,
+      offset: 0,
+      limit: 50,
+    });
     listQuoteTagsMock.mockResolvedValue([]);
     deleteQuoteMock.mockResolvedValue(undefined);
+    updateQuoteMock.mockResolvedValue(quote({ title: "Updated" }));
   });
 
   afterEach(() => {
@@ -419,14 +448,6 @@ describe("QuoteDetailPage", () => {
     expect(breadcrumb[0]).toHaveAttribute("href", "/quotes");
   });
 
-  it("renders an Edit link that points to the quotes list", async () => {
-    renderAt("/quotes/q-1");
-    await screen.findByText("On Virtue");
-    // Edit lives on the list page for now — see PLAN Phase B.1.
-    const link = screen.getByRole("link", { name: /Edit On Virtue/i });
-    expect(link).toHaveAttribute("href", "/quotes");
-  });
-
   it("paints the author from the shared cache before the network responds", async () => {
     // The QuoteDetailPage and HomePage share `["author", id]` so seeded data
     // is visible on first render. We deliberately do not assert that the
@@ -627,5 +648,178 @@ describe("QuoteDetailPage", () => {
     expect(
       await screen.findByText("quotes-list-stub")
     ).toBeInTheDocument();
+  });
+
+  describe("inline edit affordance", () => {
+    it("renders an Edit button in read mode whose accessible name embeds the quote title", async () => {
+      renderAt("/quotes/q-1");
+      await screen.findByText("On Virtue");
+      const editBtn = screen.getByRole("button", { name: /Edit On Virtue/i });
+      expect(editBtn).toBeInTheDocument();
+      // Read-mode affordances live alongside Delete; both stay enabled
+      // until the user opens the editor.
+      expect(
+        screen.getByRole("button", { name: /^delete$/i })
+      ).toBeInTheDocument();
+      // The form should not be mounted yet — entering edit mode is
+      // strictly user-initiated, so an unloaded `<select>` shouldn't be
+      // sitting in the DOM on first paint.
+      expect(
+        screen.queryByRole("button", { name: /^save$/i })
+      ).not.toBeInTheDocument();
+    });
+
+    it("entering edit mode mounts <QuoteForm> seeded from the quote and hides Edit / Delete", async () => {
+      const user = userEvent.setup();
+      renderAt("/quotes/q-1");
+      await screen.findByText("On Virtue");
+
+      await user.click(screen.getByRole("button", { name: /Edit On Virtue/i }));
+
+      // The form's title field is autofocused on mount — assert against
+      // its display value rather than a brittle DOM-order lookup.
+      const titleField = await screen.findByRole("textbox", {
+        name: /title — on virtue/i,
+      });
+      expect(titleField).toHaveValue("On Virtue");
+      expect(
+        screen.getByRole("textbox", { name: /text — on virtue/i })
+      ).toHaveValue("Virtue is a habit.\n\nNot a single act.");
+
+      // Edit / Delete are gone while the form owns the screen; surfacing
+      // them alongside Save / Cancel would let the user click Edit twice
+      // or Delete the row mid-edit.
+      expect(
+        screen.queryByRole("button", { name: /Edit On Virtue/i })
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: /^delete$/i })
+      ).not.toBeInTheDocument();
+
+      // Read-mode panels are also gone — see the panel-title heading.
+      expect(
+        screen.queryByRole("heading", { level: 3, name: /author/i })
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("heading", { level: 3, name: /classification/i })
+      ).not.toBeInTheDocument();
+      expect(
+        screen.getByRole("heading", { level: 3, name: /edit quote/i })
+      ).toBeInTheDocument();
+    });
+
+    it("Cancel exits edit mode without calling updateQuote", async () => {
+      const user = userEvent.setup();
+      renderAt("/quotes/q-1");
+      await screen.findByText("On Virtue");
+
+      await user.click(screen.getByRole("button", { name: /Edit On Virtue/i }));
+      await screen.findByRole("textbox", { name: /title — on virtue/i });
+
+      await user.click(screen.getByRole("button", { name: /^cancel$/i }));
+
+      // Back to read mode: panel headings reappear and the form is gone.
+      expect(
+        await screen.findByRole("heading", {
+          level: 3,
+          name: /classification/i,
+        })
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByRole("heading", { level: 3, name: /edit quote/i })
+      ).not.toBeInTheDocument();
+      expect(updateQuoteMock).not.toHaveBeenCalled();
+    });
+
+    it("Save submits a fully-projected QuoteWriteBody and exits edit mode on success", async () => {
+      // Server returns the updated quote; the page should write it into
+      // ["quote", id] cache and re-paint the read-mode header from the
+      // new title without waiting for a refetch.
+      updateQuoteMock.mockResolvedValue(
+        quote({ title: "Updated On Virtue", text: "New text." })
+      );
+      const user = userEvent.setup();
+      renderAt("/quotes/q-1");
+      await screen.findByText("On Virtue");
+
+      await user.click(screen.getByRole("button", { name: /Edit On Virtue/i }));
+      const titleField = await screen.findByRole("textbox", {
+        name: /title — on virtue/i,
+      });
+      await user.clear(titleField);
+      await user.type(titleField, "Updated On Virtue");
+      const textField = screen.getByRole("textbox", {
+        name: /text — on virtue/i,
+      });
+      await user.clear(textField);
+      await user.type(textField, "New text.");
+
+      await user.click(screen.getByRole("button", { name: /^save$/i }));
+
+      await waitFor(() =>
+        expect(updateQuoteMock).toHaveBeenCalledWith("q-1", {
+          title: "Updated On Virtue",
+          text: "New text.",
+          author_id: "a-1",
+          image_id: null,
+          category_id: null,
+        })
+      );
+
+      // The page exits edit mode and surfaces the new title in the h2 via
+      // the `setQueryData(["quote", id], updated)` write.
+      expect(
+        await screen.findByRole("heading", {
+          level: 2,
+          name: "Updated On Virtue",
+        })
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByRole("heading", { level: 3, name: /edit quote/i })
+      ).not.toBeInTheDocument();
+    });
+
+    it("local validation (empty title) blocks the save and never reaches the API", async () => {
+      const user = userEvent.setup();
+      renderAt("/quotes/q-1");
+      await screen.findByText("On Virtue");
+
+      await user.click(screen.getByRole("button", { name: /Edit On Virtue/i }));
+      const titleField = await screen.findByRole("textbox", {
+        name: /title — on virtue/i,
+      });
+      await user.clear(titleField);
+
+      await user.click(screen.getByRole("button", { name: /^save$/i }));
+      expect(screen.getByText("Title is required.")).toBeInTheDocument();
+      expect(updateQuoteMock).not.toHaveBeenCalled();
+    });
+
+    it("surfaces a server error inline (and stays in edit mode so the user can retry)", async () => {
+      updateQuoteMock.mockRejectedValueOnce(
+        new ApiError("Quote is locked", 409, { error: "locked" })
+      );
+      const user = userEvent.setup();
+      renderAt("/quotes/q-1");
+      await screen.findByText("On Virtue");
+
+      await user.click(screen.getByRole("button", { name: /Edit On Virtue/i }));
+      const titleField = await screen.findByRole("textbox", {
+        name: /title — on virtue/i,
+      });
+      await user.clear(titleField);
+      await user.type(titleField, "Updated");
+
+      await user.click(screen.getByRole("button", { name: /^save$/i }));
+
+      // Server message is rendered inline below the form. The form must
+      // remain mounted so the user can correct + retry without losing
+      // their draft.
+      expect(await screen.findByText("Quote is locked")).toBeInTheDocument();
+      expect(
+        screen.getByRole("textbox", { name: /title — on virtue/i })
+      ).toBeInTheDocument();
+      expect(updateQuoteMock).toHaveBeenCalledTimes(1);
+    });
   });
 });

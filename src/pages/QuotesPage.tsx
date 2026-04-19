@@ -10,7 +10,6 @@ import {
   useMemo,
   useRef,
   useState,
-  type FormEvent,
   type ReactNode,
 } from "react";
 import { flushSync } from "react-dom";
@@ -34,12 +33,17 @@ import {
 import type { QuoteWriteBody } from "@/api/types";
 import { AuthorPicker } from "@/components/AuthorPicker";
 import { EmptyState } from "@/components/EmptyState";
+import { QuoteForm } from "@/components/QuoteForm";
 import { ListSkeleton } from "@/components/Skeleton";
 import { useToast } from "@/components/useToast";
 
 const SEARCH_DEBOUNCE_MS = 400;
 
-/** Bounded fetch for the (optional) image picker. */
+/**
+ * Bounded fetch for the (optional) image picker — kept here so the inline
+ * edit row's `<select>` shares the same cap as the extracted `<QuoteForm>`.
+ * Both sites use the same React Query key so they dedupe in cache.
+ */
 const IMAGE_PICKER_LIMIT = 50;
 
 type DeleteQuoteVars = {
@@ -284,16 +288,16 @@ export function QuotesPage() {
     mutationFn: (body: QuoteWriteBody) => createQuote(body),
     onSuccess: async (_data, vars) => {
       await queryClient.invalidateQueries({ queryKey: ["quotes"] });
-      setFormTitle("");
-      setFormText("");
-      setFormAuthorId("");
-      setFormImageId("");
-      setFormCategoryId("");
-      setFormError(null);
+      // Re-mount the form by bumping its key — clears every controlled
+      // field (title, text, author, image, category) without exposing an
+      // imperative "reset" surface on the form. The picker queries are
+      // deduped via React Query so the remount is essentially free.
+      setCreateFormKey((k) => k + 1);
+      setCreateError(null);
       toast.success(`Quote "${vars.title}" created`);
     },
     onError: (err) => {
-      setFormError(err instanceof ApiError ? err.message : String(err));
+      setCreateError(err instanceof ApiError ? err.message : String(err));
       toast.error("Could not create quote", err);
     },
   });
@@ -342,16 +346,20 @@ export function QuotesPage() {
     },
   });
 
-  const [formTitle, setFormTitle] = useState("");
-  const [formText, setFormText] = useState("");
-  const [formAuthorId, setFormAuthorId] = useState("");
-  const [formImageId, setFormImageId] = useState("");
-  const [formCategoryId, setFormCategoryId] = useState("");
-  const [formError, setFormError] = useState<string | null>(null);
-  const formTitleInputRef = useRef<HTMLInputElement | null>(null);
+  // Create-form state is owned by the extracted `<QuoteForm>`; this page
+  // keeps only what the surrounding chrome needs:
+  //   - `createFormKey` re-mounts the form to reset its controlled fields
+  //     after a successful create (see `createMutation.onSuccess`).
+  //   - `createError` carries the server-side error (rendered inline by
+  //     the form, plus a toast from `createMutation.onError`).
+  //   - `createTitleInputRef` lets the empty-state CTA scroll-and-focus
+  //     the form's title input even when the list is empty.
+  const [createFormKey, setCreateFormKey] = useState(0);
+  const [createError, setCreateError] = useState<string | null>(null);
+  const createTitleInputRef = useRef<HTMLInputElement | null>(null);
 
   const focusCreateForm = () => {
-    formTitleInputRef.current?.focus();
+    createTitleInputRef.current?.focus();
   };
 
   const clearFilters = () => {
@@ -512,33 +520,6 @@ export function QuotesPage() {
     });
   };
 
-  const onSubmitCreate = (e: FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    setFormError(null);
-    const title = formTitle.trim();
-    const text = formText.trim();
-    if (!title) {
-      setFormError("Title is required.");
-      return;
-    }
-    if (!text) {
-      setFormError("Text is required.");
-      return;
-    }
-    if (formAuthorId === "") {
-      setFormError("Author is required.");
-      return;
-    }
-    const body: QuoteWriteBody = {
-      title,
-      text,
-      author_id: formAuthorId,
-      image_id: formImageId === "" ? null : formImageId,
-      category_id: formCategoryId === "" ? null : formCategoryId,
-    };
-    createMutation.mutate(body);
-  };
-
   const deleteError = useMemo(() => {
     const err = deleteMutation.error;
     if (!err) return null;
@@ -562,98 +543,14 @@ export function QuotesPage() {
 
       <div className="panel">
         <h3 className="panel-title">Create quote</h3>
-        <form
-          className="form-grid form-grid-quotes"
-          onSubmit={onSubmitCreate}
-        >
-          <label className="field field-span-2">
-            <span className="field-label">Title</span>
-            <input
-              ref={formTitleInputRef}
-              className="input"
-              value={formTitle}
-              onChange={(ev) => setFormTitle(ev.target.value)}
-              maxLength={500}
-              autoComplete="off"
-              disabled={createMutation.isPending}
-            />
-          </label>
-          <label className="field field-span-2">
-            <span className="field-label">Text</span>
-            <textarea
-              className="input textarea"
-              value={formText}
-              onChange={(ev) => setFormText(ev.target.value)}
-              rows={4}
-              disabled={createMutation.isPending}
-            />
-          </label>
-          <div className="field">
-            <span className="field-label">Author</span>
-            <span className="field-hint muted">
-              Type to search authors by name — every author is reachable.
-            </span>
-            <AuthorPicker
-              value={formAuthorId}
-              onChange={setFormAuthorId}
-              disabled={createMutation.isPending}
-              ariaLabel="Author"
-            />
-          </div>
-          <label className="field">
-            <span className="field-label">Image</span>
-            <span className="field-hint muted">
-              Optional. Focus to load up to {IMAGE_PICKER_LIMIT} images.
-            </span>
-            <select
-              className="input"
-              value={formImageId}
-              onChange={(ev) => setFormImageId(ev.target.value)}
-              onFocus={() => setImagePickerArmed(true)}
-              disabled={createMutation.isPending || imagePickerLoading}
-            >
-              <option value="">None</option>
-              {imageOptions.map((img) => (
-                <option key={img.id} value={img.id}>
-                  {truncateMiddle(img.url, 56)}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="field field-span-2">
-            <span className="field-label">Category</span>
-            <select
-              className="input"
-              value={formCategoryId}
-              onChange={(ev) => setFormCategoryId(ev.target.value)}
-              disabled={createMutation.isPending || categoryPickerLoading}
-            >
-              <option value="">None</option>
-              {quoteCategoryOptions.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <div className="form-actions">
-            <button
-              type="submit"
-              className="btn btn-primary"
-              disabled={createMutation.isPending}
-            >
-              {createMutation.isPending ? "Creating…" : "Create"}
-            </button>
-          </div>
-        </form>
-        {quoteCategoriesQuery.isError ||
-        (imagePickerArmed && imagesPickerQuery.isError) ? (
-          <p className="error" role="alert">
-            Some pickers failed to load. You can retry or refresh to populate
-            them.
-          </p>
-        ) : null}
-        {formError ? <p className="error">{formError}</p> : null}
+        <QuoteForm
+          key={createFormKey}
+          mode="create"
+          isSubmitting={createMutation.isPending}
+          submitError={createError}
+          titleInputRef={createTitleInputRef}
+          onSubmit={(body) => createMutation.mutate(body)}
+        />
       </div>
 
       <div
