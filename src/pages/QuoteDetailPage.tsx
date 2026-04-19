@@ -342,12 +342,23 @@ function AuthorBlock({
                 </p>
               ) : null}
               <p className="author-actions">
+                {/*
+                 * The author's name is part of the visible label rather than
+                 * an `aria-label` override. WCAG 2.5.3 (Label in Name)
+                 * requires the accessible name to contain the visible text;
+                 * a static "this author" caption combined with
+                 * `aria-label="… Aristotle"` would diverge for speech-input
+                 * users — they'd say the visible phrase and the
+                 * activate-by-name match would fail. Composing the resolved
+                 * name into the visible text keeps the two in sync and
+                 * makes the link self-describing in the screen-reader rotor
+                 * view as well.
+                 */}
                 <Link
                   className="link-quiet"
                   to={listLink({ author_id: author.id })}
-                  aria-label={`View all quotes by ${author.name}`}
                 >
-                  View all quotes by this author →
+                  View all quotes by {author.name} →
                 </Link>
               </p>
             </>

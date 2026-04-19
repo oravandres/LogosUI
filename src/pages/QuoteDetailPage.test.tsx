@@ -476,7 +476,7 @@ describe("QuoteDetailPage", () => {
   // links exercise the URL-as-source-of-truth contract that QuotesPage now
   // honors (PR #20), so a click takes the user straight to a filtered list
   // without any hydration glue.
-  it("renders a 'view all quotes by this author' deep link pointing at /quotes?author_id=…", async () => {
+  it("renders a 'view all quotes by <author>' deep link whose visible label equals its accessible name (WCAG 2.5.3)", async () => {
     renderAt("/quotes/q-1");
     await screen.findByText("On Virtue");
 
@@ -488,6 +488,19 @@ describe("QuoteDetailPage", () => {
     // The URL points at the list with only `author_id` set — no stale
     // filters from the current view leak into the deep link.
     expect(link).toHaveAttribute("href", "/quotes?author_id=a-1");
+
+    // WCAG 2.5.3 (Label in Name): the visible text must be contained in
+    // the accessible name so speech-input users can activate the link by
+    // saying what they see. We enforce the strongest form of this here —
+    // the link must NOT carry an `aria-label` that overrides the visible
+    // text, and the visible text must include the author name verbatim
+    // (not a generic "this author" caption that would drift from the
+    // accessible name once an aria-label is layered on top).
+    expect(link).not.toHaveAttribute("aria-label");
+    expect(link.textContent).toMatch(/View all quotes by Aristotle/);
+    // The arrow glyph stays a visible affordance, not a piece of the
+    // accessible name we depend on for activation matching.
+    expect(link.textContent).toContain("→");
   });
 
   it("does not render the author deep link while the author query is pending", async () => {
