@@ -745,7 +745,7 @@ describe("QuotesPage", () => {
       ]);
 
       renderPage(
-        "/quotes?author_id=auth-1&category_id=cat-1&tag_id=tag-1&title=virtue&offset=20"
+        "/quotes?author_id=auth-1&category_id=cat-1&tag_id=tag-1&q=virtue&offset=20"
       );
 
       // The first listQuotes call must already carry every URL-derived
@@ -758,7 +758,7 @@ describe("QuotesPage", () => {
             authorId: "auth-1",
             categoryId: "cat-1",
             tagId: "tag-1",
-            title: "virtue",
+            q: "virtue",
             offset: 20,
           })
         );
@@ -766,10 +766,10 @@ describe("QuotesPage", () => {
 
       // Visible UI controls should also reflect the hydrated state so the
       // user can read the active filter without inspecting the URL.
-      const titleSearch = await screen.findByRole("searchbox", {
-        name: /search title/i,
+      const searchBox = await screen.findByRole("searchbox", {
+        name: /^search$/i,
       });
-      expect((titleSearch as HTMLInputElement).value).toBe("virtue");
+      expect((searchBox as HTMLInputElement).value).toBe("virtue");
     });
 
     it("clamps a negative or non-integer ?offset back to 0 (defense against tampered links)", async () => {
@@ -893,35 +893,35 @@ describe("QuotesPage", () => {
       });
     });
 
-    it("syncs the editable search-box draft when ?title changes externally", async () => {
-      const { navigateTo } = renderPage("/quotes?title=virtue");
+    it("syncs the editable search-box draft when ?q changes externally", async () => {
+      const { navigateTo } = renderPage("/quotes?q=virtue");
       const searchBox = await screen.findByRole("searchbox", {
-        name: /search title/i,
+        name: /^search$/i,
       });
       expect((searchBox as HTMLInputElement).value).toBe("virtue");
 
-      await navigateTo("/quotes?title=courage");
+      await navigateTo("/quotes?q=courage");
 
       await waitFor(() =>
         expect((searchBox as HTMLInputElement).value).toBe("courage")
       );
     });
 
-    it("does not let an uncommitted search-box draft leak across an external navigation that keeps ?title unchanged", async () => {
+    it("does not let an uncommitted search-box draft leak across an external navigation that keeps ?q unchanged", async () => {
       // Regression for the debounce/navigation race:
-      //   1. User types `sto` into the search box on /quotes (no ?title).
+      //   1. User types `sto` into the search box on /quotes (no ?q).
       //   2. Before the debounce fires they click an author/tag deep link
-      //      whose ?title value is also missing.
-      //   3. Old behavior: the resync effect was gated on `appliedTitle`,
+      //      whose ?q value is also missing.
+      //   3. Old behavior: the resync effect was gated on `appliedQ`,
       //      so an unchanged committed value left the stale draft alive
-      //      and the pending timer later appended `?title=sto` onto the
+      //      and the pending timer later appended `?q=sto` onto the
       //      freshly navigated URL — the draft leaked across the
       //      navigation.
       //
-      // The fix snaps `titleInput` on any external search-param change,
+      // The fix snaps `qInput` on any external search-param change,
       // which (a) updates the visible input and (b) cancels the pending
-      // debounce via the [titleInput] effect cleanup. We assert both: no
-      // `?title=sto` ever lands on the new URL even after the debounce
+      // debounce via the [qInput] effect cleanup. We assert both: no
+      // `?q=sto` ever lands on the new URL even after the debounce
       // window elapses, and the search box reflects the destination URL.
       const user = userEvent.setup();
       const { navigateTo, getCurrentSearch } = renderPage("/quotes");
@@ -929,26 +929,26 @@ describe("QuotesPage", () => {
       await waitFor(() => expect(getCurrentSearch()).toBe(""));
 
       const searchBox = await screen.findByRole("searchbox", {
-        name: /search title/i,
+        name: /^search$/i,
       });
       await user.type(searchBox, "sto");
       expect((searchBox as HTMLInputElement).value).toBe("sto");
-      // Pre-debounce: ?title hasn't been committed yet.
-      expect(getCurrentSearch()).not.toContain("title=");
+      // Pre-debounce: ?q hasn't been committed yet.
+      expect(getCurrentSearch()).not.toMatch(/(^|&)q=/);
 
       // External navigation while the debounce is still in flight; the
-      // destination keeps `?title` absent (mirrors the "click an author
+      // destination keeps `?q` absent (mirrors the "click an author
       // deep link" scenario from the review comment).
       await navigateTo("/quotes?author_id=auth-1");
 
       // Wait past the original debounce window (SEARCH_DEBOUNCE_MS = 400 ms)
       // plus generous slack for the test runner. If the leak is back, the
-      // pending timer would commit `?title=sto` onto the new URL during
+      // pending timer would commit `?q=sto` onto the new URL during
       // this wait.
       await new Promise((resolve) => setTimeout(resolve, 600));
 
       expect(getCurrentSearch()).toContain("author_id=auth-1");
-      expect(getCurrentSearch()).not.toContain("title=");
+      expect(getCurrentSearch()).not.toMatch(/(^|&)q=/);
       // The search box also catches up to the destination URL's value
       // (empty) so the user is not left looking at their stale draft.
       expect((searchBox as HTMLInputElement).value).toBe("");
@@ -1008,6 +1008,64 @@ describe("QuotesPage", () => {
       // a known-dead value.
       const ghost = screen.getByRole("option", { name: /\(deleted tag\)/i });
       expect(ghost).toBeDisabled();
+    });
+
+    it("debounced search-box commits `?q=…` onto the URL and threads `q:` into listQuotes (not the legacy `?title=`)", async () => {
+      // Regression pin for the `?title` → `?q` swap that went alongside the
+      // backend's full-text-search endpoint (Logos PR #15, tsvector + GIN
+      // via `websearch_to_tsquery`). The visible contract is: the search
+      // box commits into the `?q` URL param and the listQuotes call carries
+      // `q: "<value>"` — nothing on either layer still says `title`.
+      const user = userEvent.setup();
+      const { getCurrentSearch } = renderPage();
+      await screen.findByText("On Virtue");
+      await waitFor(() => expect(getCurrentSearch()).toBe(""));
+
+      const searchBox = await screen.findByRole("searchbox", {
+        name: /^search$/i,
+      });
+      listQuotesMock.mockClear();
+      await user.type(searchBox, "virtue");
+
+      // Debounce window is 400 ms; wait generously past it.
+      await waitFor(
+        () => expect(getCurrentSearch()).toContain("q=virtue"),
+        { timeout: 2000 }
+      );
+      // The URL carries the new param name, not the old one.
+      expect(getCurrentSearch()).not.toMatch(/(^|&)title=/);
+
+      await waitFor(() => {
+        const lastCall =
+          listQuotesMock.mock.calls[listQuotesMock.mock.calls.length - 1]?.[0];
+        expect(lastCall).toEqual(
+          expect.objectContaining({ q: "virtue", legacyTitleOnly: false })
+        );
+        expect(lastCall).not.toHaveProperty("title");
+      });
+    });
+
+    it("honors a legacy `?title=…` deep link via listQuotes (URL is not rewritten until the user commits)", async () => {
+      // Bookmarks from before the `?title` → `?q` swap should keep filtering
+      // through the old wire shape until the user edits the search box
+      // (debounced commit then normalizes to `?q` only).
+      const { getCurrentSearch } = renderPage("/quotes?title=virtue");
+      await screen.findByText("On Virtue");
+
+      await waitFor(() => {
+        expect(listQuotesMock).toHaveBeenCalled();
+        const firstCall = listQuotesMock.mock.calls[0]?.[0];
+        expect(firstCall).toEqual(
+          expect.objectContaining({ q: "virtue", legacyTitleOnly: true })
+        );
+        expect(firstCall).not.toHaveProperty("title");
+      });
+
+      expect(getCurrentSearch()).toContain("title=virtue");
+      expect(getCurrentSearch()).not.toMatch(/(^|&)q=/);
+
+      const searchBox = screen.getByRole("searchbox", { name: /^search$/i });
+      expect((searchBox as HTMLInputElement).value).toBe("virtue");
     });
   });
 });

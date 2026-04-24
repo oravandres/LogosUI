@@ -141,14 +141,28 @@ Sliced into three independently-shippable PRs. All three landed.
 - `src/api/queryClient.ts` exports `createAppQueryClient()` which wires `QueryCache.onError` (`source: "query"`, `key: queryKey`) and `MutationCache.onError` (`source: "mutation"`, `key: mutationKey`) into `logApiError`. Per-call `onError` callbacks still run for UI behavior (toast, inline banner); this layer is purely for observability. Aborted requests (route changes, debounced supersedes) are skipped silently so navigation does not produce a stream of misleading "errors".
 - Tests: `src/api/logger.test.ts` (8) covers the structured shape, the abort skip, the unknown-error fallback, and a defense-in-depth check that no response-body content leaks into the log payload. `src/api/client.test.ts` (6) covers `ApiError` carrying `path`/`method`/`requestId`, GET defaulting, empty `X-Request-Id` handling, non-JSON failure responses, and that `postJson` still sets `Content-Type: application/json`. `src/api/queryClient.test.ts` (3) covers the cache callbacks for queries and mutations, plus the abort skip path. Total suite: **131/131 passing**. ESLint and `tsc --noEmit` clean across both tsconfig projects.
 
-### Phase E — Stretch _(future)_
+### Phase E — Stretch _(future, except E.1)_
 
+- ~~Full-text search once the backend exposes it.~~ _(shipped as E.1, below.)_
 - Bulk operations (multi-select rows → bulk delete / bulk add tag).
 - CSV export from list pages.
 - Keyboard shortcuts for power users (`/` to focus search, `n` to create).
-- Full-text search once the backend exposes it.
 
-**Rough ordering:** A → B → C → D, then E as user feedback dictates. A and B are independently shippable and do not conflict. B.1 can interleave with C without conflict.
+#### ~~E.1 — Full-text search on `QuotesPage` via `?q=`~~ _(shipped)_
+
+- Backend landed full-text search on `GET /api/v1/quotes?q=` in Logos PR #15 (merge commit `8427334`, docker publish SUCCESS, MiMi digest-pinned alongside this UI bump). The server layer is a `GENERATED ALWAYS AS … STORED` `tsvector` over title (weight A) + body (weight B) under `'english'`, ranked by `ts_rank_cd`, backed by a GIN index — see Logos PR #15's `EXPLAIN ANALYZE` thread for the index-driven plan on a 50k-row corpus.
+- `QuotesPage`'s search box now commits into **`?q=`** (was `?title=`, substring `ILIKE`). The UI-internal rename is end-to-end:
+  - **API client** — `listQuotes({ q })` replaces `listQuotes({ title })`. The param doc-string enumerates the accepted `websearch_to_tsquery` syntax (bare words, `"quoted phrases"`, `-negation`, `word or other`) and makes explicit that empty / whitespace-only values collapse to the unfiltered path so the server's rank-based ordering doesn't degenerate.
+  - **URL param** — `?q=virtue`, not `?title=virtue`. The param name also matches the API on the wire, which keeps the mental model flat and makes shareable deep links self-describing (`?q=…` reads as "search query", `?title=…` read as a typed field).
+  - **Local state** — `qInput` / `appliedQ` / `lastAppliedQRef`; `useQuery`'s key carries `searchQ: appliedQ` so cache hits and `stillOnSameView` delete-clamp comparisons stay stable.
+- **Graceful handling of legacy `?title=…` bookmarks** — the URL param is simply ignored (no rewrite, no crash, list comes up unfiltered). Migrating a stale link on someone else's behalf would be user-hostile (they may have pasted it into chat); leaving the URL intact and falling back to the unfiltered path is the least-surprising behavior.
+- **Copy refresh** — the label is `Search` (not `Search title`), the placeholder is `words, "phrases", -exclude…` to telegraph that this is not a plain substring match, and the hint now reads "Full-text search over title and body (stemming, phrases, `-excluded` terms, `or`). Results rank by relevance; updates after you stop typing for a moment." The accessible-name change (`/^search$/i` vs the old `/search title/i`) is pinned in the regression tests.
+- Tests: **2 net new specs** in `QuotesPage.test.tsx` cover the swap end-to-end — the debounced commit lands `?q=` on the URL **and** passes `q: "<value>"` (with a defense-in-depth `not.toHaveProperty("title")` on the API-client call shape), and a legacy `?title=virtue` deep link comes up unfiltered without rewriting the URL. Every pre-existing `?title`-flavored test (URL hydration → first `listQuotes` call, debounce-race leak across external navigation, `?q` external resync) was migrated in the same pass so no stale assertion references the old param name. Total suite: **186/186 passing** (was 184 before the swap — +2 net new specs). ESLint, `tsc --noEmit` (both projects), and `vite build` (with `VITE_LOGOS_API_BASE_URL=https://logos.mimi.local`) all clean.
+- Coordinated with:
+  - Logos PR #15 — lands the `?q=` endpoint, migration 000007, and the sqlc-regenerated row types that dropped `search_vector` from `SELECT` lists per review. Merged on `main`.
+  - MiMi PR #8 — digest-pins `manifests/logos/api.yaml` to the multi-arch index built from Logos `8427334`. Rollout of this UI PR does not strictly block on the MiMi rollout finishing: the old `logos-api` image silently ignores `?q=` (unknown param), so users on the upgraded UI see an unfiltered list for a few minutes during the window between this PR landing and the API image going `READY 1/1` with the new digest. That is strictly better than a hard error and matches the graceful `?title=` fallback described above.
+
+**Rough ordering:** A → B → C → D → E.1, then the rest of E as user feedback dictates. A and B are independently shippable and do not conflict. B.1 can interleave with C without conflict.
 
 ---
 

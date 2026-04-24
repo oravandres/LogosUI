@@ -53,7 +53,7 @@ type DeleteQuoteVars = {
   categoryFilterId: string;
   authorFilterId: string;
   tagFilterId: string;
-  titleSearch: string;
+  searchQ: string;
 };
 
 type UpdateQuoteVars = {
@@ -90,13 +90,20 @@ export function QuotesPage() {
   const categoryFilterId = searchParams.get("category_id") ?? "";
   const authorFilterId = searchParams.get("author_id") ?? "";
   const tagFilterId = searchParams.get("tag_id") ?? "";
-  const appliedTitle = searchParams.get("title") ?? "";
+  const qParam = searchParams.get("q") ?? "";
+  const titleParam = searchParams.get("title") ?? "";
+  // `?q` is the canonical full-text search query (Logos `websearch_to_tsquery`
+  // over title + text under 'english'; see `src/api/quotes.ts`). `?title`
+  // remains a read-only fallback when `q` is absent so old bookmarks keep
+  // working; new commits write `q` only and clear both on clear.
+  const appliedQ = qParam !== "" ? qParam : titleParam;
+  const legacyTitleOnly = titleParam !== "" && qParam === "";
   const offset = parseOffsetParam(searchParams.get("offset"));
 
   // Editable draft for the search box — stays in local state so each
   // keystroke does not roundtrip through the URL. The debounced effect
-  // below commits it into `?title` once the user stops typing.
-  const [titleInput, setTitleInput] = useState(() => appliedTitle);
+  // below commits it into `?q` once the user stops typing.
+  const [qInput, setQInput] = useState(() => appliedQ);
 
   const [imagePickerArmed, setImagePickerArmed] = useState(false);
 
@@ -105,8 +112,8 @@ export function QuotesPage() {
    * below can distinguish "we just committed this" from "the URL changed
    * underneath us" (back/forward, sidebar link, deep link, programmatic
    * `navigate('?…')`). Initialized to `null` so the very first render after
-   * mount is treated as external — that's harmless because `titleInput`'s
-   * initializer already seeded it from `appliedTitle`.
+   * mount is treated as external — that's harmless because `qInput`'s
+   * initializer already seeded it from `appliedQ`.
    */
   const lastSelfWrittenSearchRef = useRef<string | null>(null);
 
@@ -138,27 +145,27 @@ export function QuotesPage() {
   );
 
   /**
-   * Tracks the `?title` value we last committed via the debounce / handler
+   * Tracks the `?q` value we last committed via the debounce / handler
    * paths so the debounce effect can bail when the in-flight draft already
-   * matches the current URL (e.g. after we already pushed `?title=foo` on a
-   * previous tick and `titleInput` is still `"foo"`).
+   * matches the current URL (e.g. after we already pushed `?q=foo` on a
+   * previous tick and `qInput` is still `"foo"`).
    */
-  const lastAppliedTitleRef = useRef(appliedTitle);
+  const lastAppliedQRef = useRef(appliedQ);
 
   /**
    * Resync the editable search-box draft on **any** external URL change —
-   * not just `?title` changes. This closes a debounce/navigation race
+   * not just `?q` changes. This closes a debounce/navigation race
    * where:
    *
-   *   1. User types `sto` into the search box (`titleInput = "sto"`,
-   *      `appliedTitle = ""`).
+   *   1. User types `sto` into the search box (`qInput = "sto"`,
+   *      `appliedQ = ""`).
    *   2. Before the 400 ms debounce fires they navigate to a deep link
-   *      whose `?title` value is the same (commonly: still missing).
-   *   3. Old behavior gated this effect on `appliedTitle`, so the stale
+   *      whose `?q` value is the same (commonly: still missing).
+   *   3. Old behavior gated this effect on `appliedQ`, so the stale
    *      draft and its pending timer survived; the timer then appended
-   *      `?title=sto` onto the freshly navigated URL — a user-visible leak.
+   *      `?q=sto` onto the freshly navigated URL — a user-visible leak.
    *
-   * Snapping `titleInput` here triggers the debounce effect's `[titleInput]`
+   * Snapping `qInput` here triggers the debounce effect's `[qInput]`
    * cleanup, which clears the pending timer outright; the new timer
    * scheduled afterwards immediately bails because draft == latch. Self
    * writes (debounced commit, filter handlers, pager, delete `onSuccess`)
@@ -175,42 +182,47 @@ export function QuotesPage() {
       return;
     }
     lastSelfWrittenSearchRef.current = currentSearch;
-    lastAppliedTitleRef.current = appliedTitle;
-    setTitleInput(appliedTitle);
-  }, [searchParams, appliedTitle]);
+    lastAppliedQRef.current = appliedQ;
+    setQInput(appliedQ);
+  }, [searchParams, appliedQ]);
 
-  // Debounced commit of the editable draft into `?title`. Resetting
+  // Debounced commit of the editable draft into `?q`. Resetting
   // `?offset` in the same URL transition (rather than a separate effect)
   // avoids the extra `listQuotes` call with the stale offset.
   useEffect(() => {
     const t = window.setTimeout(() => {
-      const next = titleInput.trim();
-      if (lastAppliedTitleRef.current === next) {
+      const next = qInput.trim();
+      if (lastAppliedQRef.current === next) {
         return;
       }
-      lastAppliedTitleRef.current = next;
+      lastAppliedQRef.current = next;
       updateSearchParams((p) => {
-        if (next) p.set("title", next);
-        else p.delete("title");
+        if (next) {
+          p.set("q", next);
+          p.delete("title");
+        } else {
+          p.delete("q");
+          p.delete("title");
+        }
         p.delete("offset");
       });
     }, SEARCH_DEBOUNCE_MS);
     return () => window.clearTimeout(t);
-  }, [titleInput, updateSearchParams]);
+  }, [qInput, updateSearchParams]);
 
   const listContextRef = useRef({
     offset,
     categoryFilterId,
     authorFilterId,
     tagFilterId,
-    titleSearch: appliedTitle,
+    searchQ: appliedQ,
   });
   listContextRef.current = {
     offset,
     categoryFilterId,
     authorFilterId,
     tagFilterId,
-    titleSearch: appliedTitle,
+    searchQ: appliedQ,
   };
 
   const quoteCategoriesQuery = useQuery({
@@ -267,7 +279,8 @@ export function QuotesPage() {
         categoryFilterId,
         authorFilterId,
         tagFilterId,
-        titleSearch: appliedTitle,
+        searchQ: appliedQ,
+        legacyTitleOnly,
         offset,
       },
     ],
@@ -278,7 +291,8 @@ export function QuotesPage() {
         categoryId: categoryFilterId,
         authorId: authorFilterId,
         tagId: tagFilterId,
-        title: appliedTitle,
+        q: appliedQ,
+        legacyTitleOnly,
         signal,
       }),
     placeholderData: keepPreviousData,
@@ -325,7 +339,7 @@ export function QuotesPage() {
         ctx.categoryFilterId === vars.categoryFilterId &&
         ctx.authorFilterId === vars.authorFilterId &&
         ctx.tagFilterId === vars.tagFilterId &&
-        ctx.titleSearch === vars.titleSearch;
+        ctx.searchQ === vars.searchQ;
       if (vars.onlyRowOnPage && vars.pageOffset > 0 && stillOnSameView) {
         const next = Math.max(0, vars.pageOffset - QUOTES_PAGE_SIZE);
         // `flushSync` ensures the URL transition (and the dependent list
@@ -366,12 +380,13 @@ export function QuotesPage() {
     // Clearing the editable draft and the latched "last committed" marker
     // alongside the URL transition prevents the debounce effect from
     // firing a redundant follow-up commit with the now-empty value.
-    setTitleInput("");
-    lastAppliedTitleRef.current = "";
+    setQInput("");
+    lastAppliedQRef.current = "";
     updateSearchParams((p) => {
       p.delete("category_id");
       p.delete("author_id");
       p.delete("tag_id");
+      p.delete("q");
       p.delete("title");
       p.delete("offset");
     });
@@ -381,7 +396,7 @@ export function QuotesPage() {
     categoryFilterId !== "" ||
     authorFilterId !== "" ||
     tagFilterId !== "" ||
-    appliedTitle !== "";
+    appliedQ !== "";
 
   // Inline edit state
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -566,13 +581,13 @@ export function QuotesPage() {
               </span>
             ) : null}
             <label className="field inline field-grow">
-              <span className="field-label">Search title</span>
+              <span className="field-label">Search</span>
               <input
                 className="input input-compact input-search"
                 type="search"
-                value={titleInput}
-                onChange={(ev) => setTitleInput(ev.target.value)}
-                placeholder="Substring…"
+                value={qInput}
+                onChange={(ev) => setQInput(ev.target.value)}
+                placeholder={'words, "phrases", -exclude…'}
                 autoComplete="off"
                 aria-describedby="quotes-search-hint"
               />
@@ -636,7 +651,9 @@ export function QuotesPage() {
           </div>
         </div>
         <p id="quotes-search-hint" className="muted hint-text">
-          Title filter updates after you stop typing for a moment.
+          Full-text search over title and body (stemming, phrases,
+          <code>-excluded</code> terms, <code>or</code>). Results rank by
+          relevance; updates after you stop typing for a moment.
         </p>
 
         {listQuery.isPending && !page ? (
@@ -897,7 +914,7 @@ export function QuotesPage() {
                                     categoryFilterId,
                                     authorFilterId,
                                     tagFilterId,
-                                    titleSearch: appliedTitle,
+                                    searchQ: appliedQ,
                                   });
                                 }
                               }}
