@@ -1038,40 +1038,34 @@ describe("QuotesPage", () => {
       await waitFor(() => {
         const lastCall =
           listQuotesMock.mock.calls[listQuotesMock.mock.calls.length - 1]?.[0];
-        expect(lastCall).toEqual(expect.objectContaining({ q: "virtue" }));
-        // Defense in depth: the old API-client param must not sneak back in
-        // under a partial rename.
+        expect(lastCall).toEqual(
+          expect.objectContaining({ q: "virtue", legacyTitleOnly: false })
+        );
         expect(lastCall).not.toHaveProperty("title");
       });
     });
 
-    it("ignores a legacy `?title=…` deep link (list comes up unfiltered, URL is not rewritten)", async () => {
-      // Bookmarks from before the `?title` → `?q` swap should degrade
-      // gracefully: no crash, no silent rewrite of someone else's URL
-      // (the user may have pasted it into chat), and no accidental
-      // double-filter. The list query fires with no search term — the
-      // unfiltered path — which is the least-surprising fallback.
+    it("honors a legacy `?title=…` deep link via listQuotes (URL is not rewritten until the user commits)", async () => {
+      // Bookmarks from before the `?title` → `?q` swap should keep filtering
+      // through the old wire shape until the user edits the search box
+      // (debounced commit then normalizes to `?q` only).
       const { getCurrentSearch } = renderPage("/quotes?title=virtue");
       await screen.findByText("On Virtue");
 
       await waitFor(() => {
         expect(listQuotesMock).toHaveBeenCalled();
         const firstCall = listQuotesMock.mock.calls[0]?.[0];
-        // No `q` because the legacy param is not migrated, and no `title`
-        // because the API client dropped that field entirely.
-        expect(firstCall?.q ?? "").toBe("");
+        expect(firstCall).toEqual(
+          expect.objectContaining({ q: "virtue", legacyTitleOnly: true })
+        );
         expect(firstCall).not.toHaveProperty("title");
       });
 
-      // URL stays as the user left it — don't mutate shared links.
       expect(getCurrentSearch()).toContain("title=virtue");
       expect(getCurrentSearch()).not.toMatch(/(^|&)q=/);
 
-      // The visible search box reflects the *active* filter (none), not
-      // the stale legacy param, so the user understands the list is
-      // actually unfiltered.
       const searchBox = screen.getByRole("searchbox", { name: /^search$/i });
-      expect((searchBox as HTMLInputElement).value).toBe("");
+      expect((searchBox as HTMLInputElement).value).toBe("virtue");
     });
   });
 });

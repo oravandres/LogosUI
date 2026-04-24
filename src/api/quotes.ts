@@ -35,8 +35,20 @@ export type ListQuotesParams = {
    * zero across the board. The handler is a pure pass-through — no parsing,
    * no validation — so whatever lands here goes straight to the DB's
    * permissive parser.
+   *
+   * When `legacyTitleOnly` is true (URL had `?title=` but no `?q=`), the same
+   * string is sent as `title` only so pre-FTS `logos-api` revisions still
+   * filter. Otherwise a non-empty value is sent as both `q` and `title` so
+   * older pods honor `title` while FTS-aware handlers ignore `title` when `q`
+   * is set (Logos `QuoteHandler.List`).
    */
   q?: string;
+  /**
+   * When true with a non-empty trimmed `q`, wire the search as `?title=` only
+   * (substring filter on pre-FTS backends). Mutually exclusive with the
+   * dual-send path used when this is false/undefined.
+   */
+  legacyTitleOnly?: boolean;
   signal?: AbortSignal;
 };
 
@@ -59,7 +71,12 @@ export function listQuotes(
   }
   const q = params.q?.trim() ?? "";
   if (q !== "") {
-    search.set("q", q);
+    if (params.legacyTitleOnly) {
+      search.set("title", q);
+    } else {
+      search.set("q", q);
+      search.set("title", q);
+    }
   }
   const query = search.toString();
   return fetchJson<PaginatedResponse<Quote>>(`${API_PREFIX}?${query}`, {

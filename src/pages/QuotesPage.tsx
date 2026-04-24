@@ -90,14 +90,14 @@ export function QuotesPage() {
   const categoryFilterId = searchParams.get("category_id") ?? "";
   const authorFilterId = searchParams.get("author_id") ?? "";
   const tagFilterId = searchParams.get("tag_id") ?? "";
-  // `?q` is the user-facing full-text search query (Logos `websearch_to_tsquery`
-  // over title + text under 'english'; see `src/api/quotes.ts` for the
-  // accepted syntax). Previously this page used `?title` (substring `ILIKE`)
-  // — the URL param was renamed alongside the backend swap so deep links
-  // signal FTS semantics. An old `?title=…` deep link is silently ignored
-  // here; the list simply comes up unfiltered, which is the graceful
-  // fallback for a UI-internal param name change.
-  const appliedQ = searchParams.get("q") ?? "";
+  const qParam = searchParams.get("q") ?? "";
+  const titleParam = searchParams.get("title") ?? "";
+  // `?q` is the canonical full-text search query (Logos `websearch_to_tsquery`
+  // over title + text under 'english'; see `src/api/quotes.ts`). `?title`
+  // remains a read-only fallback when `q` is absent so old bookmarks keep
+  // working; new commits write `q` only and clear both on clear.
+  const appliedQ = qParam !== "" ? qParam : titleParam;
+  const legacyTitleOnly = titleParam !== "" && qParam === "";
   const offset = parseOffsetParam(searchParams.get("offset"));
 
   // Editable draft for the search box — stays in local state so each
@@ -197,8 +197,13 @@ export function QuotesPage() {
       }
       lastAppliedQRef.current = next;
       updateSearchParams((p) => {
-        if (next) p.set("q", next);
-        else p.delete("q");
+        if (next) {
+          p.set("q", next);
+          p.delete("title");
+        } else {
+          p.delete("q");
+          p.delete("title");
+        }
         p.delete("offset");
       });
     }, SEARCH_DEBOUNCE_MS);
@@ -275,6 +280,7 @@ export function QuotesPage() {
         authorFilterId,
         tagFilterId,
         searchQ: appliedQ,
+        legacyTitleOnly,
         offset,
       },
     ],
@@ -286,6 +292,7 @@ export function QuotesPage() {
         authorId: authorFilterId,
         tagId: tagFilterId,
         q: appliedQ,
+        legacyTitleOnly,
         signal,
       }),
     placeholderData: keepPreviousData,
@@ -380,6 +387,7 @@ export function QuotesPage() {
       p.delete("author_id");
       p.delete("tag_id");
       p.delete("q");
+      p.delete("title");
       p.delete("offset");
     });
   };
