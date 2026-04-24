@@ -36,17 +36,27 @@ export type ListQuotesParams = {
    * no validation — so whatever lands here goes straight to the DB's
    * permissive parser.
    *
-   * When `legacyTitleOnly` is true (URL had `?title=` but no `?q=`), the same
-   * string is sent as `title` only so pre-FTS `logos-api` revisions still
-   * filter. Otherwise a non-empty value is sent as both `q` and `title` so
-   * older pods honor `title` while FTS-aware handlers ignore `title` when `q`
-   * is set (Logos `QuoteHandler.List`).
+   * Wire shape is single-send:
+   *
+   * - Canonical path (`legacyTitleOnly` false/undefined): sent as `?q=` only.
+   *   The FTS-aware Logos handler composes `title` ILIKE with the tsvector
+   *   filter as AND (Logos PR #15, `QuoteHandler.List`), so also sending
+   *   `title=` would drop body-only matches and turn syntax like
+   *   `"quoted phrases"`, `-excluded`, or `word or other` into literal title
+   *   substrings on the backend. Old-pod rollout safety is handled by
+   *   ordering — MiMi rolls the FTS-capable `logos-api` image ahead of this
+   *   UI change — not by dual-sending from the UI.
+   * - Legacy path (`legacyTitleOnly` true): sent as `?title=` only so an
+   *   existing `/quotes?title=…` deep link keeps filtering through the
+   *   pre-FTS wire shape until the user edits the search box, which
+   *   normalizes the URL to `?q=` only.
    */
   q?: string;
   /**
    * When true with a non-empty trimmed `q`, wire the search as `?title=` only
-   * (substring filter on pre-FTS backends). Mutually exclusive with the
-   * dual-send path used when this is false/undefined.
+   * (substring filter, pre-FTS wire shape) so legacy `?title=` deep links
+   * keep filtering. Mutually exclusive with the canonical `?q=` only path
+   * used when this is false/undefined.
    */
   legacyTitleOnly?: boolean;
   signal?: AbortSignal;
@@ -75,7 +85,6 @@ export function listQuotes(
       search.set("title", q);
     } else {
       search.set("q", q);
-      search.set("title", q);
     }
   }
   const query = search.toString();
