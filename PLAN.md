@@ -24,7 +24,9 @@ This document tracks what is done, what is next, and how we get the UI deployed 
 
 What is **not** shipped:
 
-- No global search.
+- No **cross-resource** global search. `QuotesPage` carries full-text search over title and body via Logos `?q=` (Phase E.1). `AuthorsPage`, `ImagesPage`, `TagsPage`, and `CategoriesPage` still rely on substring or exact-match filters; there is no single search box that spans all five resource types.
+- No client-side telemetry beyond structured `console.error`. The Phase D logger was deliberately built so a future RUM sink can replace `console.error` without touching call sites; nothing currently consumes it (see Phase H below).
+- No route-level code splitting. The whole app — every page, every picker, every form — ships as one bundle (see Phase F below). Acceptable for an admin UI of this size, but the next bump in the corpus / picker windows will make it visible.
 
 ---
 
@@ -162,7 +164,175 @@ Sliced into three independently-shippable PRs. All three landed.
   - Logos PR #15 — lands the `?q=` endpoint, migration 000007, and the sqlc-regenerated row types that dropped `search_vector` from `SELECT` lists per review. Merged on `main`.
   - MiMi PR #8 — digest-pins `manifests/logos/api.yaml` to the multi-arch index built from Logos `8427334`. Rollout of this UI PR does not strictly block on the MiMi rollout finishing: the old `logos-api` image silently ignores `?q=` (unknown param), so users on the upgraded UI see an unfiltered list for a few minutes during the window between this PR landing and the API image going `READY 1/1` with the new digest. That is strictly better than a hard error and matches the graceful `?title=` fallback described above.
 
-**Rough ordering:** A → B → C → D → E.1, then the rest of E as user feedback dictates. A and B are independently shippable and do not conflict. B.1 can interleave with C without conflict.
+### Phase F — Performance _(proposed)_
+
+The bundle ships every page, every picker, and every form on first paint. For an admin UI of this size that's defensible — but the bundle is the easiest place to spot regressions early, and a couple of cheap interventions buy headroom without changing user-visible behavior. Sliced into three independently-shippable PRs, ordered by ROI.
+
+#### F.1 — Route-level code splitting
+
+- Wrap each page in `React.lazy()` (`HomePage`, `CategoriesPage`, `ImagesPage`, `AuthorsPage`, `QuotesPage`, `QuoteDetailPage`, `TagsPage`) and mount a single `<Suspense fallback={<ListSkeleton …/>}>` boundary inside `Layout` so a route transition shows the existing skeleton primitive instead of a flash of nothing. The boundary lives below the header so the nav stays interactive while the chunk loads.
+- The shared primitives (`Combobox`, `AuthorPicker`, `QuoteForm`, `Skeleton`, `EmptyState`, `ToastProvider`, `ErrorBoundary`, the `@/api/*` modules) stay in the entry chunk because every page imports at least one — splitting them would just produce more round trips on the hot path.
+- Vite's default chunking will then emit one chunk per `React.lazy()` call site. Verify with `vite build --report` or the Phase F.2 visualizer that no page chunk inadvertently re-bundles `react-query` or `react-router`. If it does, force them into the entry chunk via `build.rollupOptions.output.manualChunks` rather than fighting the default heuristic.
+- Tests: add a routing test that asserts `<Suspense>` shows the skeleton on initial nav and unmounts it once the chunk has resolved. Existing per-page tests render the page directly and don't go through the lazy boundary, so they keep passing untouched.
+
+#### F.2 — Bundle size visibility + budget
+
+- Add `rollup-plugin-visualizer` as a dev dependency, expose `npm run build:analyze` (`VITE_BUNDLE_ANALYZE=1 vite build` → opens `dist/stats.html`). Default builds ignore the env so CI keeps producing a clean `dist/` tree.
+- Add a CI step that asserts `dist/assets/*.js` (gzip) stays under a documented budget — start at the post-F.1 baseline + ~10% headroom. The budget lives in `package.json` so it's PR-reviewable; CI computes the gzip size with `gzip -c | wc -c` and fails fast on regression. The intent is signal, not policing — a deliberate bump is a one-line PR.
+- Document the budget number in `README.md` "CI" section so contributors know what to expect when a new dependency lands.
+
+#### F.3 — Prefetch on intent
+
+- The `react-router@7` `<Link>` API does not yet expose a `prefetch` prop; equivalent behavior is achieved by warming the React Query cache imperatively. On `mouseenter` / `focus` of a recent-quotes link or a row title link, call `queryClient.prefetchQuery({ queryKey: ["quote", id], queryFn })` so the navigation is served from cache.
+- Gate behind `navigator.connection?.saveData !== true` and the global pointer-coarse media query so users on metered connections / touch devices don't pay for prefetches that often go unused.
+- One tiny shared `usePrefetchQuote(id)` hook in `src/components/` keeps this out of every Link callsite. Wire on `HomePage` recent-list and `QuotesPage` row title only — the highest-traffic paths.
+- Tests: assert `prefetchQuery` is called on `mouseenter` and **not** on initial render, and that `saveData` blocks the call.
+
+### Phase G — Hardening and supply chain _(proposed)_
+
+The Phase 4 deployment shipped the core security baseline (`X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, restricted PSS, non-root nginx). What's missing is a Content-Security-Policy and the supply-chain pieces that protect the cluster against tag-repointing attacks on base images and GitHub Actions.
+
+#### G.1 — Content-Security-Policy header in `nginx.conf`
+
+- Add a strict CSP, repeated in every `location` block (same nginx `add_header` inheritance gotcha from §4.1):
+
+  ```
+  Content-Security-Policy:
+    default-src 'self';
+    base-uri 'self';
+    object-src 'none';
+    frame-ancestors 'none';
+    form-action 'self';
+    img-src 'self' data: https:;
+    connect-src 'self';
+    script-src 'self';
+    style-src 'self' 'unsafe-inline';
+    font-src 'self' data:;
+  ```
+
+- `connect-src 'self'` is sufficient because production is same-origin (§4.4 sibling Ingress). On `localhost:5173` dev, the API runs on `localhost:8000` — that's a cross-origin path and the dev build needs `connect-src 'self' http://localhost:8000`. Solution: keep the dev server unprotected (Vite's default), only ship the strict CSP from `deploy/nginx.conf`, which only runs in production.
+- `'unsafe-inline'` for `style-src` is needed today because `Skeleton` uses inline `style={{ width, height }}` for dynamic sizing. The two ways out are (a) move the dynamic sizing to CSS custom properties on the `style` attribute (still an inline style — same CSP gate) or (b) use a per-request nonce. (a) is no easier than the status quo; (b) requires nginx to inject a fresh nonce per response, which is more complexity than the small attack-surface reduction is worth for a bundle that has no third-party scripts.
+- CI smoke test gains a CSP-presence assertion alongside the existing nosniff/X-Frame-Options/Referrer-Policy checks.
+
+#### G.2 — Pin base images by digest
+
+- Replace `node:22.12-alpine` and `nginxinc/nginx-unprivileged:1.29.4-alpine` in the `Dockerfile` with their `sha256:` digests (`node:22.12-alpine@sha256:…`, `nginxinc/nginx-unprivileged:1.29.4-alpine@sha256:…`).
+- Tag-only references silently follow registry retags; a digest pin makes a base-image bump an explicit one-line PR — exactly the surface Renovate / Dependabot can keep up to date.
+- The MiMi pod spec already pins `logos-ui` by tag (which is digest-pinned via the GHCR multi-arch index). This change closes the same gap on the build side.
+
+#### G.3 — Pin GitHub Actions by SHA
+
+- Replace floating `@v4` / `@v3` / `@v6` references in `.github/workflows/ci.yml` with full commit SHAs (e.g. `actions/checkout@8e5e7e5...`).
+- Mitigates the class of supply-chain attacks where a tagged action gets repointed at malicious code (the `tj-actions/changed-files` incident is the canonical example). Renovate has a built-in `helpers:pinGitHubActionDigests` preset to manage these and surface upgrade PRs that comment the human-readable version next to the SHA.
+- Cost is low (a one-shot commit) and the convention is widely understood by reviewers.
+
+#### G.4 — Dependabot + non-blocking `npm audit`
+
+- Add `.github/dependabot.yml` covering `npm` (weekly) and `github-actions` (weekly) ecosystems. Group minor/patch updates so the PR queue doesn't fragment.
+- Add a non-blocking `npm audit --audit-level=high` step to the existing `test-and-build` job: prints the report, exits 0 always. The point is signal, not gating — blocking on `npm audit` famously produces bad incentives (people wait for the audit to clear instead of investigating).
+- Pair with a quarterly issue-template reminder to scrub the dependency tree (already supported by Dependabot's `schedule` directive, no extra wiring needed).
+
+### Phase H — Telemetry depth _(proposed)_
+
+Phase D shipped a structured logger sink and `ApiError.requestId` plumbing. What's missing is (a) a client-side request id that gets generated even when the server doesn't echo one, (b) Web Vitals via the same sink so we can see what the user actually experiences, and (c) routing render-error reporting through the same sink so observability has a single chokepoint.
+
+#### H.1 — Client-generated `X-Request-Id`
+
+- `fetchJson` mints `crypto.randomUUID()` per request and forwards it in the outbound `X-Request-Id` header. The server's response header still wins (Logos echoes its own when present, and that one ties into server-side traces) — but if the server omits the header, the client-generated id is preserved on the thrown `ApiError.requestId` so logs are correlatable across the network boundary even before Logos PR plumbs it server-side.
+- Tests: extend `src/api/client.test.ts` to assert (a) the outbound header is set on every request, (b) the response value (when present) overrides the client-generated value on the thrown `ApiError`, and (c) the client-generated value sticks on a `NetworkError` (transport failure — the response never produced a header).
+
+#### H.2 — Web Vitals via the existing sink
+
+- Add `web-vitals@5.x`, register the four headline metrics (CLS, LCP, INP, TTFB) in a new `src/api/vitals.ts` that funnels into `logVital(metric)` — a thin shim emitting `console.info("[ui] vital", { name, value, id, delta, navigationType })`.
+- The sink is replaceable for future RUM (same swap-the-implementation contract as `logApiError`); Sentry, DataDog, GA4, or the Logos backend itself can absorb the events without touching call sites.
+- Wired once at module init from `main.tsx` so every page is covered without per-route plumbing. Production-only — `import.meta.env.PROD` guards the registration so dev tools aren't drowned in vital pings.
+- Test: assert the sink is called with each metric name when the registered callbacks fire (use `web-vitals/dist/lib/types` for the metric shape).
+
+#### H.3 — Route render errors through the same sink
+
+- Replace `console.error("[ui] render error", …)` in `ErrorBoundary.componentDidCatch` with a thin `logRenderError(err, info)` that emits via the same structured sink as `logApiError`. Field shape stays close to Phase D so dashboards don't need to special-case render errors vs API errors.
+- The only call site is the boundary in `Layout`, so this is genuinely one-line — but it consolidates the "where do client-side errors go" surface into a single module, which matters when wiring a real RUM later.
+
+### Phase I — Test depth _(proposed)_
+
+The 192 specs across 20 files are excellent at the page-component level and at the React Query cache-hook level. What's missing is fetch-level integration coverage and a thin end-to-end smoke test against the production container — both of which catch a different class of regression than RTL alone.
+
+#### I.1 — MSW (Mock Service Worker) for fetch-level integration tests
+
+- Add `msw@2.x` and a `src/test/server.ts` that boots an MSW node server in `beforeAll` / restores in `afterEach` / closes in `afterAll`.
+- Migrate the highest-value tests to MSW handlers so they exercise the real `fetchJson` → `ApiError` / `NetworkError` → `logApiError` path end-to-end. Best candidates:
+  - `QuotesPage.test.tsx` debounce/navigation race specs — currently mock the API client, so the test relies on the mock matching the client's call shape; an MSW-backed equivalent fails on a real wire-shape regression too.
+  - `QuoteDetailPage.test.tsx` 404 / cache-eviction specs — the abort-vs-error distinction in `logger.ts` only fires for real cancellations, which `vi.mock`'d clients can't produce.
+  - `client.test.ts` X-Request-Id and JSON-error-body coverage — already at the fetch level; MSW makes the fixtures less brittle.
+- Existing `vi.mock` tests stay where the API client is the unit under test directly (e.g. `quotes.test.ts`) and where MSW would just be ceremony. The migration is opportunistic, not wholesale.
+
+#### I.2 — Coverage thresholds in Vitest
+
+- Configure `vitest.config.ts` `coverage` with `provider: "v8"`, `reporter: ["text", "html"]`, and per-directory `thresholds`:
+  - `src/api/**` — `lines: 90, branches: 85` (the boundary code where bugs are expensive)
+  - `src/components/**` — `lines: 80, branches: 75` (most components have thorough tests already)
+  - `src/url/**` — `lines: 100, branches: 100` (small, security-flavored helper)
+- Add `npm run test:coverage` and a CI step that runs it. Page-level pages (`src/pages/**`) sit outside the threshold gate because the test files are dense and the stable surface is the API/component layer; tightening on pages would punish a routine new-feature PR.
+
+#### I.3 — Playwright e2e against the production container in CI
+
+- A single Playwright spec runs after the existing `container` smoke test (same workflow, same container instance — no extra runtime overhead). Covers the golden path:
+  1. `GET /` → SPA shell renders, Home dashboard loads.
+  2. Click `Quotes` nav → list loads.
+  3. Type `virtue` into search → debounced commit → URL gains `?q=virtue`, table refreshes.
+  4. Click first row's title link → `/quotes/:id` renders.
+  5. Click `Edit` → form mounts → change title → click `Save` → header re-renders with new title, toast appears.
+  6. Click `← All quotes` → list still has the search filter applied.
+- Plus two regression guards:
+  - Deep link to `/quotes?author_id=<id>` resolves through the SPA fallback and pre-applies the filter.
+  - Deleting a quote pops a toast and removes the row from the list.
+- The spec runs against MSW-stubbed responses (or a stand-in API container if Logos publishes one) — we deliberately do not hit the real cluster API in CI.
+- Reuses the existing `linux/amd64` container image from the smoke test; no new Dockerfile required.
+
+### Phase J — UX quality of life _(proposed)_
+
+A grab-bag of small wins that don't fit any other phase, ordered by user impact. Each is independently shippable; some absorb stretch goals previously listed in Phase E.
+
+#### J.1 — Keyboard shortcuts behind a discoverable help overlay
+
+- Single shared `useKeyboardShortcuts()` hook registers a small set of Vim-style chords:
+  - `/` — focus the current page's primary search input (no-op if the page has none).
+  - `n` — focus the current page's create form / open the create panel.
+  - `g h` / `g q` / `g a` / `g c` / `g i` / `g t` — go to Home / Quotes / Authors / Categories / Images / Tags.
+  - `?` — open a keyboard-shortcut help overlay (modal dialog, ARIA-compliant).
+  - `Escape` — close the help overlay.
+- The hook bails when focus is in an editable element (`<input>`, `<textarea>`, `[contenteditable]`) so typing the letter `n` into the title field does not navigate. Multi-key chords use a 1.5s timeout so a stray `g` doesn't lock subsequent keystrokes.
+- The help overlay is the discoverability mechanism — without it, hidden shortcuts are user-hostile. A small `?` button in the header toggles the same overlay for mouse users.
+- Absorbs the "Keyboard shortcuts for power users" line from Phase E (now superseded).
+
+#### J.2 — Route-change focus management
+
+- On every client-side navigation, focus the destination page's `<h2>` (each page already has one) and announce the page title via a polite live region. Today, focus stays on whatever the user just clicked, so a screen-reader user has to re-establish context manually.
+- Implement as a tiny `usePageFocus()` hook that runs once per page mount and is wired in each page's `<h2>` via a `ref`. Or, more centrally, a `<RouteAnnouncer>` next to `ToastProvider` that subscribes to `useLocation()` and updates a polite `role="status"` region with the new page's heading text.
+- Test: navigate from `/` to `/quotes` and assert `document.activeElement` is the Quotes heading and the announcer text reads "Quotes".
+
+#### J.3 — Responsive admin tables on narrow viewports
+
+- The data tables (`data-table-quotes`, `data-table-authors`, `data-table-images`, etc.) are desktop-first. At narrow widths they horizontally scroll inside `table-wrap`, which works but truncates the inline-edit row's controls awkwardly.
+- Two viable approaches:
+  - **(a) Stacked card view at `max-width: 640px`**: each row collapses to a card with field-label / field-value pairs and a single-line action group. The inline-edit row stays as a stacked form. CSS-only — no JSX changes — via `@media` and `display: grid`.
+  - **(b) Sticky first column + horizontal scroll**: pin the title / name column with `position: sticky; left: 0` so the user can scroll-and-correlate. Less work, less behavior change.
+- (b) is the cheap default; (a) is the better long-term answer when the project takes mobile use seriously. Pick one or stage them — the data layer doesn't change either way.
+
+#### J.4 — Stricter TypeScript flags
+
+- Enable `noUncheckedIndexedAccess` and `exactOptionalPropertyTypes` in `tsconfig.app.json`. Both are off today, both catch real bug classes:
+  - `noUncheckedIndexedAccess` — `array[i]` returns `T | undefined`, forcing each callsite to handle the empty case. The `Combobox.tsx` `optionDomIds[i]` usages, the `tagsPickerQuery.data?.items[…]` chains, and a few other spots will need targeted `if (!x) return null;` guards.
+  - `exactOptionalPropertyTypes` — the difference between `{ x?: number }` and `{ x?: number | undefined }` becomes meaningful; clears up a class of "passing `undefined` explicitly is silently OK" gotchas.
+- Roll the resulting fix-ups into one PR with no behavior change. Expected blast radius: ~15-25 narrowing assertions across `src/`, all mechanical.
+
+#### J.5 — Extract per-resource forms (mirror Phase B.1c)
+
+- `AuthorsPage`, `ImagesPage`, and `CategoriesPage` still inline their create/edit form JSX with state, validation, picker queries, and mutation wiring directly in the page component. The pattern is identical across the three (down to the field-grow toolbar wrap and the `?` ARIA labels) and identical to what `QuoteForm` extracted from `QuotesPage` in Phase B.1c.
+- Slice into three independently-shippable PRs (`AuthorForm`, `ImageForm`, `CategoryForm`), each following the B.1c contract: stacked-panel form, exported `build<Resource>WriteBody` validator, in-page edit affordance on a future detail page if/when those land. The table-row inline-edits stay as-is for the same reason `QuotesPage` did (table layout diverges enough from the stacked panel that a layout prop would be a fork bigger than the duplication it eliminates).
+- The three forms are simpler than `QuoteForm` (no AuthorPicker, simpler picker queries, fewer fallback lookups) so the PRs are smaller in absolute size.
+
+**Rough ordering:** A → B → C → D → E.1 _(all shipped)_ → F.1 → F.2 → G.1 → G.3 → G.2 → G.4 → H.1 → H.2 → H.3 → I.2 → I.1 → I.3 → J.4 → J.2 → J.5 → J.1 → J.3 → F.3, then the remaining stretch items (bulk operations, CSV export, cross-resource search) as user feedback dictates. F.1 and G.* are independently shippable and do not conflict; H.1 / H.2 / H.3 share the logger sink but compose without interaction; I.1 / I.2 / I.3 are orthogonal; J.* are individually small.
 
 ---
 
@@ -288,3 +458,7 @@ There are no runtime env vars — the container has nothing to configure at laun
 - **index.html caching via Traefik vs nginx?** Currently proposed in nginx (`Cache-Control: no-store`). If Traefik's middleware is the convention elsewhere in MiMi, move it there.
 - **Single Argo CD Application for both `logos` and `logos-ui` vs two?** Two is cleaner (separate sync waves, separate health), mirrors the existing `logos-app.yaml`.
 - ~~**Ingress ownership.** Two options: (a) extend `manifests/logos/ingress.yaml` to carry both path rules, or (b) give `logos-ui` its own Ingress resource on the same host.~~ Resolved as (b) in §4.4.
+- **CSP nonce vs `'unsafe-inline'` for `style-src` (Phase G.1)?** The dynamic sizing on `Skeleton` is the only inline-style site in the codebase today. A per-request nonce closes the gap fully but requires nginx to inject and rotate the value; `'unsafe-inline'` is the pragmatic answer for a same-origin admin SPA with no third-party scripts. Revisit if CSP becomes part of an audit.
+- **Where does the RUM sink go (Phase H)?** The Phase D logger was deliberately built so the sink is replaceable. Candidates: Sentry (managed, drop-in), an OTLP-compatible internal collector running in MiMi, or an HTTP endpoint on `logos-api` itself. The right answer is whichever is easiest to operate alongside the existing observability stack.
+- **MSW vs handwritten fetch fakes (Phase I.1)?** MSW is the obvious default but it adds a dev dependency and a service-worker abstraction layer the project does not otherwise use. A small handwritten `mockFetch(handlers)` helper would cover the same surface for our specific call shapes. MSW's win is the documented handler authoring API and the same handler being re-usable in Storybook / e2e — neither of which we have today.
+- **Web Vitals sampling rate (Phase H.2)?** The cluster is internal, so volume is not a concern; ship at 100% sampling and revisit only if the sink fan-out becomes a cost problem.
