@@ -172,7 +172,7 @@ The bundle ships every page, every picker, and every form on first paint. For an
 
 - Wrap each page in `React.lazy()` (`HomePage`, `CategoriesPage`, `ImagesPage`, `AuthorsPage`, `QuotesPage`, `QuoteDetailPage`, `TagsPage`) and mount a single `<Suspense fallback={<ListSkeleton …/>}>` boundary inside `Layout` so a route transition shows the existing skeleton primitive instead of a flash of nothing. The boundary lives below the header so the nav stays interactive while the chunk loads.
 - The shared primitives (`Combobox`, `AuthorPicker`, `QuoteForm`, `Skeleton`, `EmptyState`, `ToastProvider`, `ErrorBoundary`, the `@/api/*` modules) stay in the entry chunk because every page imports at least one — splitting them would just produce more round trips on the hot path.
-- Vite's default chunking will then emit one chunk per `React.lazy()` call site. Verify with `vite build --report` or the Phase F.2 visualizer that no page chunk inadvertently re-bundles `react-query` or `react-router`. If it does, force them into the entry chunk via `build.rollupOptions.output.manualChunks` rather than fighting the default heuristic.
+- Vite's default chunking will then emit one chunk per `React.lazy()` call site. Verify the split with `npm run build:analyze` from F.2 (rollup-plugin-visualizer) — there is no `vite build --report` flag, the visualizer is the only supported path. Goal: no page chunk should inadvertently re-bundle `react-query` or `react-router`. If a duplicate ships, force the offender into the entry chunk via `build.rollupOptions.output.manualChunks` rather than fighting the default heuristic. Sequencing implication: F.2 lands first so F.1 has the analyzer available; the rough-ordering line at the end of §3 already reflects that.
 - Tests: add a routing test that asserts `<Suspense>` shows the skeleton on initial nav and unmounts it once the chunk has resolved. Existing per-page tests render the page directly and don't go through the lazy boundary, so they keep passing untouched.
 
 #### F.2 — Bundle size visibility + budget
@@ -228,7 +228,11 @@ The Phase 4 deployment shipped the core security baseline (`X-Content-Type-Optio
 
 #### G.4 — Dependabot + non-blocking `npm audit`
 
-- Add `.github/dependabot.yml` covering `npm` (weekly) and `github-actions` (weekly) ecosystems. Group minor/patch updates so the PR queue doesn't fragment.
+- Add `.github/dependabot.yml` covering **three** ecosystems on a weekly cadence:
+  - `package-ecosystem: "npm"` at `/` for application dependencies.
+  - `package-ecosystem: "github-actions"` at `/` for the workflow files.
+  - `package-ecosystem: "docker"` at `/` for the `Dockerfile`. This is the load-bearing pair with G.2: digest-pinning the Node and nginx base images is **only** safe alongside an automated refresh PR pipeline — otherwise the pin freezes a CVE-vulnerable layer in place. Dependabot's docker ecosystem opens an upgrade PR with the new digest and the human-readable version in the title, which keeps the bump explicit and reviewable. (If we end up preferring Renovate as the umbrella tool — see §7's open question — drop the Dependabot config and use Renovate's `docker`, `npm`, and `github-actions` managers instead; pick one tool, not both.)
+  - Group minor/patch updates per ecosystem so the PR queue doesn't fragment.
 - Add a non-blocking `npm audit --audit-level=high` step to the existing `test-and-build` job: prints the report, exits 0 always. The point is signal, not gating — blocking on `npm audit` famously produces bad incentives (people wait for the audit to clear instead of investigating).
 - Pair with a quarterly issue-template reminder to scrub the dependency tree (already supported by Dependabot's `schedule` directive, no extra wiring needed).
 
@@ -238,8 +242,12 @@ Phase D shipped a structured logger sink and `ApiError.requestId` plumbing. What
 
 #### H.1 — Client-generated `X-Request-Id`
 
-- `fetchJson` mints `crypto.randomUUID()` per request and forwards it in the outbound `X-Request-Id` header. The server's response header still wins (Logos echoes its own when present, and that one ties into server-side traces) — but if the server omits the header, the client-generated id is preserved on the thrown `ApiError.requestId` so logs are correlatable across the network boundary even before Logos PR plumbs it server-side.
-- Tests: extend `src/api/client.test.ts` to assert (a) the outbound header is set on every request, (b) the response value (when present) overrides the client-generated value on the thrown `ApiError`, and (c) the client-generated value sticks on a `NetworkError` (transport failure — the response never produced a header).
+- `fetchJson` mints `crypto.randomUUID()` per request and forwards it in the outbound `X-Request-Id` header. The server's response header still wins (Logos echoes its own when present, and that one ties into server-side traces) — but if the server omits the header, the client-generated id is preserved on the thrown `ApiError.requestId` so logs are correlatable across the network boundary even before Logos plumbs it server-side.
+- **CORS coordination — non-trivial.** `X-Request-Id` is **not** a CORS-safelisted request header, so adding it unconditionally turns every API call into a preflighted request, and the cross-origin response value is unreadable to the client unless the server explicitly exposes it. Logos today allows only `Accept`, `Authorization`, `Content-Type` (`Access-Control-Allow-Headers`) and exposes only `Link` (`Access-Control-Expose-Headers`), so a naive rollout fails preflight from `localhost:5173 → localhost:8000` in dev and silently drops the response id everywhere even when the server emits it. Two coordinated changes are required, in order:
+  1. **Logos PR** — extend `CORS_ALLOWED_HEADERS` to include `X-Request-Id` and `CORS_EXPOSE_HEADERS` to include `X-Request-Id`. Both are env-var driven on the API side; the in-cluster value already covers all dev origins (§4.5), so the change is one-line for each list.
+  2. **LogosUI PR (this phase)** — gate the outbound header so it is **only** sent when the request is same-origin **or** when Logos has shipped the CORS update. The simplest gate is "always send when `getApiBaseUrl()` resolves to a same-origin URL; require an explicit opt-in (`VITE_SEND_REQUEST_ID=true`) otherwise". Production is same-origin (§4.4 sibling Ingress) so production gets full coverage day one; dev gets it once the Logos PR rolls out and the opt-in is flipped in `.env.development`.
+- Until step 1 lands, `fetchJson` continues to read the response header on same-origin paths only (current behavior — already guarded by browser policy). The thrown `ApiError.requestId` falls back to the client-generated UUID when the response header is absent or unreadable so observability does not regress in the meantime.
+- Tests: extend `src/api/client.test.ts` to assert (a) the outbound header is set on same-origin requests, (b) the outbound header is **omitted** on cross-origin requests when the opt-in is off — guarding against an accidental preflight regression — (c) the response value (when present) overrides the client-generated value on the thrown `ApiError`, (d) the client-generated value sticks on a `NetworkError` (transport failure — the response never produced a header), and (e) a CORS-preflight failure surfaces as `NetworkError` rather than a swallowed `undefined`.
 
 #### H.2 — Web Vitals via the existing sink
 
@@ -286,7 +294,10 @@ The 192 specs across 20 files are excellent at the page-component level and at t
 - Plus two regression guards:
   - Deep link to `/quotes?author_id=<id>` resolves through the SPA fallback and pre-applies the filter.
   - Deleting a quote pops a toast and removes the row from the list.
-- The spec runs against MSW-stubbed responses (or a stand-in API container if Logos publishes one) — we deliberately do not hit the real cluster API in CI.
+- **Network mocking — Playwright `page.route()`, not MSW.** MSW only works in the browser when the bundle registers its service worker (`mockServiceWorker.js`); the production container deliberately does **not** ship that worker — it would be dead code in prod and a CSP exception we don't want. Use Playwright's built-in `page.route('**/api/v1/**', (route) => route.fulfill({ json: fixture }))` instead. Fixtures live next to the spec and are reusable across all tests in the same file. Two practical alternatives if the fixture surface grows past ~10 endpoints (it shouldn't for the golden-path coverage proposed here):
+  - **Stand-in API container** — a tiny `logos-api-stub` image (e.g. `mockoon-cli` or a 30-line Go binary) compose-up'd alongside the UI container, with the UI built against `VITE_LOGOS_API_BASE_URL=http://logos-api-stub:8000`. This is closer to prod (real network round-trips, real CORS preflights for cross-origin builds, real `Content-Type` negotiation) and fixtures live in JSON files.
+  - **Hit the real cluster** — explicitly out of scope; CI must not depend on cluster availability and must not fan out write traffic to a shared environment.
+- Pick `page.route()` for v1; revisit only if Playwright fixture authoring becomes the bottleneck.
 - Reuses the existing `linux/amd64` container image from the smoke test; no new Dockerfile required.
 
 ### Phase J — UX quality of life _(proposed)_
@@ -307,9 +318,13 @@ A grab-bag of small wins that don't fit any other phase, ordered by user impact.
 
 #### J.2 — Route-change focus management
 
-- On every client-side navigation, focus the destination page's `<h2>` (each page already has one) and announce the page title via a polite live region. Today, focus stays on whatever the user just clicked, so a screen-reader user has to re-establish context manually.
-- Implement as a tiny `usePageFocus()` hook that runs once per page mount and is wired in each page's `<h2>` via a `ref`. Or, more centrally, a `<RouteAnnouncer>` next to `ToastProvider` that subscribes to `useLocation()` and updates a polite `role="status"` region with the new page's heading text.
-- Test: navigate from `/` to `/quotes` and assert `document.activeElement` is the Quotes heading and the announcer text reads "Quotes".
+- On every **pathname** change (not every `useLocation()` change), focus the destination page's `<h2>` and announce the page title via a polite live region. Today, focus stays on whatever the user just clicked, so a screen-reader user has to re-establish context manually.
+- **Pathname-only is load-bearing**, not a refinement. Several pages drive `setSearchParams` on every keystroke or filter change — `QuotesPage` writes `?q=…`, `?author_id=…`, `?category_id=…`, `?tag_id=…`, `?offset=…` (and `AuthorsPage` is on its way to the same pattern in J.5). Subscribing to the full location and refocusing the heading on each of those would yank focus away from the search input mid-debounce, blur the field, and dismiss IME composition — exactly the user-hostile behavior the phase exists to prevent. Compare `prevPathnameRef.current !== location.pathname` and bail otherwise.
+- Implementation shape: a `<RouteAnnouncer>` mounted next to `ToastProvider` in `Layout` that derives the announcement string from the current `pathname` (a small route → label table) and only updates the polite `role="status"` region when the pathname changes. Heading focus is delegated to a tiny `usePageFocus(headingRef)` hook each page calls once with its `<h2>` ref; the hook also runs only on pathname changes. The `<h2>` carries `tabIndex={-1}` so it can be programmatically focused by the hook without becoming part of the natural keyboard tab order — without that, every page would acquire a useless extra Tab stop.
+- Tests:
+  - Navigate from `/` to `/quotes` and assert `document.activeElement` is the Quotes heading and the announcer text reads "Quotes".
+  - **Regression pin**: typing `v`, `i`, `r`, `t`, `u`, `e` into the `QuotesPage` search box advances the URL through `?q=v` … `?q=virtue` (multiple `setSearchParams` calls) **without** ever moving focus off the `<input>`. This is the exact bug the pathname-only gate exists to prevent and is also the pin for the hook ever regressing back to `useLocation()` subscription.
+  - Navigate from `/quotes` to `/quotes/abc` (different pathname, same first segment) and confirm the heading **does** receive focus.
 
 #### J.3 — Responsive admin tables on narrow viewports
 
