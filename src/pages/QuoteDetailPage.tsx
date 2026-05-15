@@ -19,6 +19,7 @@ import { QuoteForm } from "@/components/QuoteForm";
 import { quoteToFormValues } from "@/components/quoteForm.helpers";
 import { Skeleton } from "@/components/Skeleton";
 import { useToast } from "@/components/useToast";
+import { NotFoundPage } from "@/pages/NotFoundPage";
 
 /**
  * Read-oriented page for a single quote at `/quotes/:id`.
@@ -145,11 +146,11 @@ export function QuoteDetailPage() {
     quoteQuery.error.status === 404;
 
   if (id === "") {
-    return <NotFound />;
+    return <NotFoundPage />;
   }
 
   if (quoteNotFound) {
-    return <NotFound />;
+    return <NotFoundPage />;
   }
 
   return (
@@ -530,20 +531,6 @@ function QuoteDetailSkeleton() {
         <Skeleton width="40%" height="1rem" />
       </div>
     </div>
-  );
-}
-
-function NotFound() {
-  return (
-    <section className="page">
-      <p className="muted breadcrumb">
-        <Link to="/quotes">← All quotes</Link>
-      </p>
-      <h2>Quote not found</h2>
-      <p className="muted">
-        This quote may have been deleted, or the link is wrong.
-      </p>
-    </section>
   );
 }
 
