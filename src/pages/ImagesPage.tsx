@@ -17,13 +17,16 @@ import { ApiError } from "@/api/client";
 import { listAllCategoriesByType } from "@/api/categories";
 import {
   createImage,
+  DEFAULT_IMAGE_GEN_MODEL_ID,
   deleteImage,
+  generateImage,
+  IMAGE_GEN_MODELS,
   IMAGES_PAGE_SIZE,
   listImages,
   updateImage,
   uploadImage,
 } from "@/api/images";
-import type { ImageWriteBody } from "@/api/types";
+import type { GenerateImageBody, ImageWriteBody } from "@/api/types";
 import { EmptyState } from "@/components/EmptyState";
 import { ListSkeleton } from "@/components/Skeleton";
 import { Tabs } from "@/components/Tabs";
@@ -65,7 +68,40 @@ const ACCEPTED_UPLOAD_TYPES = [
  */
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 
-type RegisterTab = "url" | "upload";
+/**
+ * Hard caps for the Generate tab inputs. These mirror the defensive caps
+ * Logos enforces in `internal/handler/images.go::Generate`:
+ *
+ *   width / height ∈ [0, 4096]    (multiples of 64 by convention)
+ *   steps          ∈ [0, 200]
+ *
+ * The form already constrains to "common-sense" defaults (the picker
+ * caps at 2048 since 4096×4096 takes minutes on FLUX2), but the absolute
+ * caps live here so the UI's number-validation message matches the
+ * server's 400 message verbatim.
+ */
+const GEN_MIN_DIMENSION = 256;
+const GEN_MAX_DIMENSION = 2048;
+const GEN_DIMENSION_STEP = 64;
+const GEN_MAX_PROMPT_LENGTH = 2000;
+
+/**
+ * The generator request takes a while (DarkBase FLUX2-dev is typically
+ * 10–30s, sometimes longer). We surface a "still working" hint after
+ * this threshold so the user sees something is alive even if the spinner
+ * has been up for a while; below this threshold the standard
+ * `Generating…` button label is enough.
+ */
+const GEN_LONG_RUNNING_MS = 45_000;
+
+type RegisterTab = "url" | "upload" | "generate";
+
+type GenerateMutationVars = GenerateImageBody;
+
+function clampToStep(value: number, step: number): number {
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  return Math.round(value / step) * step;
+}
 
 export function ImagesPage() {
   const queryClient = useQueryClient();
@@ -133,6 +169,40 @@ export function ImagesPage() {
     },
   });
 
+  const generateMutation = useMutation({
+    mutationFn: (body: GenerateMutationVars) => generateImage(body),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["images"] });
+      resetGenerateForm();
+      toast.success("Image generated");
+    },
+    onError: (err) => {
+      // Surface the server's `error` field verbatim when present
+      // (`details` carries the upstream message for 502, which is the
+      // most useful breadcrumb the user can act on).
+      const detail =
+        err instanceof ApiError &&
+        err.body &&
+        typeof err.body === "object" &&
+        "details" in err.body &&
+        typeof (err.body as { details: unknown }).details === "string"
+          ? (err.body as { details: string }).details
+          : null;
+      const baseMessage =
+        err instanceof ApiError ? err.message : String(err);
+      const friendly = mapGenerateError(err, baseMessage, detail);
+      setGenerateError(friendly);
+      // 503 from this endpoint means the server has no generator
+      // configured; remember that so we can lock the panel until the
+      // user reloads / the deployment is fixed (a fresh submit would
+      // just receive the same 503 again).
+      if (err instanceof ApiError && err.status === 503) {
+        setGenerationDisabled(true);
+      }
+      toast.error("Could not generate image", err);
+    },
+  });
+
   const updateMutation = useMutation({
     mutationFn: ({ id, body }: UpdateImageVars) => updateImage(id, body),
     onSuccess: async () => {
@@ -184,6 +254,36 @@ export function ImagesPage() {
   const [uploadError, setUploadError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
+  // Generate tab state.
+  const [genPrompt, setGenPrompt] = useState("");
+  const [genModel, setGenModel] = useState<string>(DEFAULT_IMAGE_GEN_MODEL_ID);
+  const [genWidth, setGenWidth] = useState<number>(1024);
+  const [genHeight, setGenHeight] = useState<number>(1024);
+  const [genSeed, setGenSeed] = useState<string>("");
+  const [genAlt, setGenAlt] = useState("");
+  const [genCategoryId, setGenCategoryId] = useState("");
+  const [generateError, setGenerateError] = useState<string | null>(null);
+  // Sticky once a 503 lands: image generation is unavailable on this
+  // server. Resets only on full reload (intentional — the operator
+  // needs to fix the deployment for it to come back).
+  const [generationDisabled, setGenerationDisabled] = useState(false);
+  const [generateLongRunning, setGenerateLongRunning] = useState(false);
+
+  // After GEN_LONG_RUNNING_MS the user gets a "still working" reassurance
+  // so the spinner doesn't feel stalled. Reset whenever the mutation
+  // moves out of the pending state. We deliberately don't shorten the
+  // generator's own deadline here — the backend is authoritative.
+  useEffect(() => {
+    if (!generateMutation.isPending) {
+      setGenerateLongRunning(false);
+      return;
+    }
+    const handle = window.setTimeout(() => {
+      setGenerateLongRunning(true);
+    }, GEN_LONG_RUNNING_MS);
+    return () => window.clearTimeout(handle);
+  }, [generateMutation.isPending]);
+
   // Build a preview URL for the selected file. Object URLs MUST be
   // revoked once they're no longer in use to avoid leaking the in-memory
   // blob handle. The `useEffect` here owns the lifecycle.
@@ -206,6 +306,16 @@ export function ImagesPage() {
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
+  };
+
+  const resetGenerateForm = () => {
+    setGenPrompt("");
+    setGenSeed("");
+    setGenAlt("");
+    setGenCategoryId("");
+    setGenerateError(null);
+    // We intentionally keep `genModel`, `genWidth`, `genHeight` so the
+    // user's last-used render settings persist for the next prompt.
   };
 
   const focusCreateForm = () => {
@@ -327,6 +437,64 @@ export function ImagesPage() {
       altText: altTrim === "" ? null : altTrim,
       categoryId: uploadCategoryId === "" ? null : uploadCategoryId,
     });
+  };
+
+  const onSubmitGenerate = (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (generationDisabled) return;
+    setGenerateError(null);
+
+    const prompt = genPrompt.trim();
+    if (prompt === "") {
+      setGenerateError("Prompt is required.");
+      return;
+    }
+    if (prompt.length > GEN_MAX_PROMPT_LENGTH) {
+      setGenerateError(
+        `Prompt is too long (${prompt.length} characters; max ${GEN_MAX_PROMPT_LENGTH}).`
+      );
+      return;
+    }
+
+    const width = clampToStep(genWidth, GEN_DIMENSION_STEP);
+    const height = clampToStep(genHeight, GEN_DIMENSION_STEP);
+    if (width < GEN_MIN_DIMENSION || width > GEN_MAX_DIMENSION) {
+      setGenerateError(
+        `Width must be between ${GEN_MIN_DIMENSION} and ${GEN_MAX_DIMENSION}.`
+      );
+      return;
+    }
+    if (height < GEN_MIN_DIMENSION || height > GEN_MAX_DIMENSION) {
+      setGenerateError(
+        `Height must be between ${GEN_MIN_DIMENSION} and ${GEN_MAX_DIMENSION}.`
+      );
+      return;
+    }
+
+    // Empty seed string ⇒ random (server treats `0` as "pick one").
+    let seed = 0;
+    if (genSeed.trim() !== "") {
+      const parsed = Number.parseInt(genSeed.trim(), 10);
+      if (!Number.isFinite(parsed) || parsed < 0) {
+        setGenerateError("Seed must be a non-negative whole number.");
+        return;
+      }
+      seed = parsed;
+    }
+
+    const altTrim = genAlt.trim();
+    const body: GenerateImageBody = {
+      prompt,
+      model: genModel,
+      width,
+      height,
+      seed,
+      steps: 0,
+      cfg_scale: 0,
+      alt_text: altTrim === "" ? null : altTrim,
+      category_id: genCategoryId === "" ? null : genCategoryId,
+    };
+    generateMutation.mutate(body);
   };
 
   const deleteError = useMemo(() => {
@@ -498,6 +666,169 @@ export function ImagesPage() {
                 </form>
               ),
             },
+            {
+              id: "generate",
+              label: "Generate",
+              panel: generationDisabled ? (
+                <p
+                  className="error"
+                  role="alert"
+                  data-testid="generate-disabled-banner"
+                >
+                  Image generation is not configured on this server. Ask
+                  an admin to set <code>LOGOS_IMAGEGEN_PROVIDER</code>{" "}
+                  before retrying.
+                </p>
+              ) : (
+                <form
+                  className="form-grid form-grid-images"
+                  onSubmit={onSubmitGenerate}
+                >
+                  <div className="field field-span-2">
+                    <label>
+                      <span className="field-label">Prompt</span>
+                      <textarea
+                        className="input"
+                        value={genPrompt}
+                        onChange={(ev) => setGenPrompt(ev.target.value)}
+                        maxLength={GEN_MAX_PROMPT_LENGTH}
+                        rows={3}
+                        placeholder="A serene mountain lake at dawn, photorealistic, soft mist…"
+                        disabled={generateMutation.isPending}
+                        required
+                      />
+                    </label>
+                    <span className="field-hint muted">
+                      {genPrompt.length}/{GEN_MAX_PROMPT_LENGTH} characters
+                    </span>
+                  </div>
+                  <label className="field">
+                    <span className="field-label">Model</span>
+                    <select
+                      className="input"
+                      value={genModel}
+                      onChange={(ev) => setGenModel(ev.target.value)}
+                      disabled={generateMutation.isPending}
+                    >
+                      {IMAGE_GEN_MODELS.map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="field">
+                    <span className="field-label">Alt text</span>
+                    <input
+                      className="input"
+                      value={genAlt}
+                      onChange={(ev) => setGenAlt(ev.target.value)}
+                      maxLength={500}
+                      autoComplete="off"
+                      disabled={generateMutation.isPending}
+                    />
+                  </label>
+                  <label className="field">
+                    <span className="field-label">Category (optional)</span>
+                    <select
+                      className="input"
+                      value={genCategoryId}
+                      onChange={(ev) => setGenCategoryId(ev.target.value)}
+                      disabled={
+                        generateMutation.isPending ||
+                        imageCategoriesQuery.isPending
+                      }
+                    >
+                      <option value="">None</option>
+                      {imageCategoryOptions.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <details className="field field-span-2 generate-advanced">
+                    <summary>Advanced (size, seed)</summary>
+                    <div className="form-grid form-grid-images">
+                      <label className="field">
+                        <span className="field-label">
+                          Width (multiple of {GEN_DIMENSION_STEP})
+                        </span>
+                        <input
+                          className="input"
+                          type="number"
+                          min={GEN_MIN_DIMENSION}
+                          max={GEN_MAX_DIMENSION}
+                          step={GEN_DIMENSION_STEP}
+                          value={genWidth}
+                          onChange={(ev) =>
+                            setGenWidth(Number(ev.target.value))
+                          }
+                          disabled={generateMutation.isPending}
+                        />
+                      </label>
+                      <label className="field">
+                        <span className="field-label">
+                          Height (multiple of {GEN_DIMENSION_STEP})
+                        </span>
+                        <input
+                          className="input"
+                          type="number"
+                          min={GEN_MIN_DIMENSION}
+                          max={GEN_MAX_DIMENSION}
+                          step={GEN_DIMENSION_STEP}
+                          value={genHeight}
+                          onChange={(ev) =>
+                            setGenHeight(Number(ev.target.value))
+                          }
+                          disabled={generateMutation.isPending}
+                        />
+                      </label>
+                      <label className="field field-span-2">
+                        <span className="field-label">
+                          Seed (blank = random)
+                        </span>
+                        <input
+                          className="input"
+                          type="text"
+                          inputMode="numeric"
+                          pattern="[0-9]*"
+                          value={genSeed}
+                          onChange={(ev) => setGenSeed(ev.target.value)}
+                          autoComplete="off"
+                          disabled={generateMutation.isPending}
+                          placeholder="random"
+                        />
+                      </label>
+                    </div>
+                  </details>
+                  <div className="form-actions">
+                    <button
+                      type="submit"
+                      className="btn btn-primary"
+                      disabled={
+                        generateMutation.isPending ||
+                        genPrompt.trim() === ""
+                      }
+                    >
+                      {generateMutation.isPending
+                        ? "Generating…"
+                        : "Generate"}
+                    </button>
+                    {generateMutation.isPending ? (
+                      <span
+                        className="muted generate-pending-hint"
+                        aria-live="polite"
+                      >
+                        {generateLongRunning
+                          ? "Still working — image generation can take a minute or two."
+                          : "Generating with the configured backend (~20s)…"}
+                      </span>
+                    ) : null}
+                  </div>
+                </form>
+              ),
+            },
           ]}
         />
         {imageCategoriesQuery.isError ? (
@@ -511,6 +842,11 @@ export function ImagesPage() {
         ) : null}
         {activeTab === "upload" && uploadError ? (
           <p className="error">{uploadError}</p>
+        ) : null}
+        {activeTab === "generate" &&
+        generateError &&
+        !generationDisabled ? (
+          <p className="error">{generateError}</p>
         ) : null}
       </div>
 
@@ -820,4 +1156,37 @@ function formatBytes(bytes: number): string {
   if (kib < 1024) return `${kib.toFixed(1)} KiB`;
   const mib = kib / 1024;
   return `${mib.toFixed(1)} MiB`;
+}
+
+/**
+ * Translate raw `images:generate` errors into a single user-facing
+ * sentence. Logos already returns a friendly `error` field; we rephrase
+ * the most common `status` codes so the user knows which lever to pull
+ * (retry vs. shorter prompt vs. contact admin) without having to read
+ * the upstream details.
+ *
+ * `details` (when present) is the upstream message for 502/504 — we
+ * splice it onto the friendly headline so an operator scanning the page
+ * still sees the underlying clue.
+ */
+function mapGenerateError(
+  err: unknown,
+  message: string,
+  details: string | null
+): string {
+  if (!(err instanceof ApiError)) return message;
+  switch (err.status) {
+    case 400:
+      return message;
+    case 502:
+      return details
+        ? `Generation failed: ${details}`
+        : `Generation failed: ${message}`;
+    case 503:
+      return "Image generation is not configured on this server.";
+    case 504:
+      return "Generation timed out — try a shorter prompt or smaller size.";
+    default:
+      return message;
+  }
 }

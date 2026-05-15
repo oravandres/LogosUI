@@ -1,5 +1,6 @@
 import { fetchJson, postJson, postMultipart, putJson } from "@/api/client";
 import type {
+  GenerateImageBody,
   Image,
   ImageUploadMetadata,
   ImageWriteBody,
@@ -90,4 +91,55 @@ export function uploadImage(
     form.set("category_id", metadata.category_id);
   }
   return postMultipart<Image>(`${API_PREFIX}/uploads`, form);
+}
+
+/**
+ * Static catalog of image-generation model identifiers the UI exposes
+ * in the Generate tab.
+ *
+ * The list is intentionally a const array rather than a runtime fetch
+ * because:
+ *
+ *  1. The Logos backend currently has no discovery endpoint that
+ *     reflects what its configured `imagegen` provider can render. The
+ *     canonical names live across DarkBase and Sparky API contracts;
+ *     hard-coding the union here matches what's already deployed and
+ *     keeps the UI from making an extra request on every panel mount.
+ *  2. The Generate tab is internal-admin surface; if a name needs to
+ *     change, the `images:generate` request body is a free-form string
+ *     so callers stay forward-compatible — the dropdown is just the
+ *     curated subset shown in the picker.
+ *
+ * If the backend grows a `GET /api/v1/images:generate/models` endpoint
+ * later, swap this for a `useQuery` and keep the same `id` shape.
+ */
+export const IMAGE_GEN_MODELS = [
+  { id: "flux2-dev", label: "FLUX2-dev (default)" },
+  { id: "flux2-klein", label: "FLUX2-klein" },
+  { id: "qwen-image", label: "Qwen-Image" },
+  { id: "hunyuanimage-3-instruct", label: "HunyuanImage-3-instruct" },
+] as const;
+
+export const DEFAULT_IMAGE_GEN_MODEL_ID: (typeof IMAGE_GEN_MODELS)[number]["id"] =
+  "flux2-dev";
+
+/**
+ * Trigger a synchronous image generation against the configured Logos
+ * backend.
+ *
+ * Wire shape: `POST /api/v1/images:generate`, JSON body matching
+ * `GenerateImageBody`. On success the server returns the persisted
+ * `Image` row with `source: "generated"` and `url` pointing at the
+ * same-origin blob endpoint.
+ *
+ * The request is intentionally synchronous (single round-trip), in
+ * line with the plan's "sync-blocking with a 60s deadline" decision —
+ * the UI shows a spinner while it's pending. `signal` lets a caller
+ * abort if the user navigates away or supersedes the request.
+ */
+export function generateImage(
+  body: GenerateImageBody,
+  signal?: AbortSignal
+): Promise<Image> {
+  return postJson<Image>(`${API_PREFIX}:generate`, body, { signal });
 }
