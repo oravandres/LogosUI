@@ -73,6 +73,35 @@ export type ImageUploadMetadata = {
   category_id: string | null;
 };
 
+/**
+ * Matches Logos `model.GenerateImageRequest`.
+ *
+ * Conventions on the wire (kept in sync with the Go struct):
+ *
+ * - Optional numeric tuning knobs (`width`, `height`, `seed`, `steps`,
+ *   `cfg_scale`) are zero-valued on the wire when the caller wants the
+ *   backend's default, not absent — Go decodes a missing JSON field to
+ *   the zero value anyway, so sending `0` keeps the two ends symmetric
+ *   and lets the backend use its own per-model defaults.
+ * - `model` is an opaque identifier string the backend forwards to its
+ *   image-generation worker; the canonical list lives in
+ *   `IMAGE_GEN_MODELS` (`src/api/images.ts`) until the backend exposes
+ *   a discovery endpoint.
+ * - `alt_text` and `category_id` are persisted on the resulting Image
+ *   row exactly like the URL / Upload paths.
+ */
+export type GenerateImageBody = {
+  prompt: string;
+  model: string;
+  width: number;
+  height: number;
+  seed: number;
+  steps: number;
+  cfg_scale: number;
+  alt_text: string | null;
+  category_id: string | null;
+};
+
 /** Matches Logos `model.AuthorResponse`. */
 export type Author = {
   id: string;
