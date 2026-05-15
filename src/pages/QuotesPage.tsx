@@ -36,6 +36,7 @@ import { EmptyState } from "@/components/EmptyState";
 import { QuoteForm } from "@/components/QuoteForm";
 import { ListSkeleton } from "@/components/Skeleton";
 import { useToast } from "@/components/useToast";
+import { parseOffsetParam } from "@/url/offsetParam";
 
 const SEARCH_DEBOUNCE_MS = 400;
 
@@ -60,23 +61,6 @@ type UpdateQuoteVars = {
   id: string;
   body: QuoteWriteBody;
 };
-
-/**
- * Parse a non-negative integer from a URL search param. Returns `0` for
- * missing / non-integer / negative values so a tampered `?offset=-1`,
- * `?offset=foo`, `?offset=20foo`, `?offset=3.14`, or `?offset=1e2` cannot
- * put the list into an invalid state.
- *
- * We deliberately do **not** rely on `Number.parseInt`'s lenient
- * "consume-leading-digits" behavior — a strict regex match on the whole
- * string is the only way to enforce the documented contract.
- */
-function parseOffsetParam(raw: string | null): number {
-  if (raw === null || !/^\d+$/.test(raw)) return 0;
-  const n = Number.parseInt(raw, 10);
-  if (!Number.isFinite(n)) return 0;
-  return n;
-}
 
 export function QuotesPage() {
   const queryClient = useQueryClient();

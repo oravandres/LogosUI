@@ -5,6 +5,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -12,6 +13,7 @@ import {
   type FormEvent,
 } from "react";
 import { flushSync } from "react-dom";
+import { useSearchParams } from "react-router";
 import { ApiError } from "@/api/client";
 import {
   AUTHORS_PAGE_SIZE,
@@ -26,6 +28,7 @@ import type { AuthorWriteBody } from "@/api/types";
 import { EmptyState } from "@/components/EmptyState";
 import { ListSkeleton } from "@/components/Skeleton";
 import { useToast } from "@/components/useToast";
+import { parseOffsetParam } from "@/url/offsetParam";
 
 const SEARCH_DEBOUNCE_MS = 400;
 
@@ -48,13 +51,92 @@ type UpdateAuthorVars = {
 export function AuthorsPage() {
   const queryClient = useQueryClient();
   const toast = useToast();
-  const [categoryFilterId, setCategoryFilterId] = useState("");
-  const [searchInput, setSearchInput] = useState("");
-  const [appliedSearch, setAppliedSearch] = useState("");
-  const [offset, setOffset] = useState(0);
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  // URL search params are the actual source of truth — derived directly,
+  // not mirrored from local state — so browser back/forward, programmatic
+  // `navigate('?…')`, and shareable links all flow into the list without
+  // any hydration effect to keep in sync. Mirrors the contract documented
+  // in `.cursor/rules/12-pr-review-lessons.mdc` (URL search params as
+  // state) and applied to QuotesPage in PR #20.
+  const categoryFilterId = searchParams.get("category_id") ?? "";
+  const appliedSearch = searchParams.get("name") ?? "";
+  const offset = parseOffsetParam(searchParams.get("offset"));
+
+  // Editable draft for the search box — stays in local state so each
+  // keystroke does not roundtrip through the URL. The debounced effect
+  // below commits it into `?name` once the user stops typing.
+  const [searchInput, setSearchInput] = useState(() => appliedSearch);
+
   const [portraitPickerArmed, setPortraitPickerArmed] = useState(false);
 
-  const lastAppliedSearchRef = useRef("");
+  /**
+   * Latches the URL string we last wrote ourselves so the resync effect
+   * below can distinguish "we just committed this" from "the URL changed
+   * underneath us" (back/forward, sidebar link, deep link, programmatic
+   * `navigate('?…')`). Initialized to `null` so the very first render
+   * after mount is treated as external — that's harmless because
+   * `searchInput`'s initializer already seeded it from `appliedSearch`.
+   */
+  const lastSelfWrittenSearchRef = useRef<string | null>(null);
+
+  /**
+   * Centralized setter that mutates the current URL search params with
+   * `replace: true` so the back stack does not collect a history entry
+   * per filter change or per keystroke. Empty values are deleted (rather
+   * than set to `""`) so the URL stays clean.
+   *
+   * Pass a mutator callback rather than a fully constructed
+   * `URLSearchParams` so concurrent updates never race over a stale
+   * snapshot of the URL. Records the resulting string into
+   * `lastSelfWrittenSearchRef` so the resync effect can recognize self
+   * writes and skip clobbering the editable draft on its own commits.
+   */
+  const updateSearchParams = useCallback(
+    (mutator: (next: URLSearchParams) => void) => {
+      setSearchParams(
+        (current) => {
+          const next = new URLSearchParams(current);
+          mutator(next);
+          lastSelfWrittenSearchRef.current = next.toString();
+          return next;
+        },
+        { replace: true }
+      );
+    },
+    [setSearchParams]
+  );
+
+  /**
+   * Tracks the `?name` value we last committed via the debounce / handler
+   * paths so the debounce effect can bail when the in-flight draft already
+   * matches the current URL.
+   */
+  const lastAppliedSearchRef = useRef(appliedSearch);
+
+  /**
+   * Resync the editable search-box draft on **any** external URL change
+   * — not just `?name` changes — so the debounce/navigation race
+   * documented in `.cursor/rules/12-pr-review-lessons.mdc` (and fixed for
+   * QuotesPage in commit `7e62017`) cannot leak a stale draft across
+   * cross-navigation. Self writes (debounced commit, filter handlers,
+   * pager, delete `onSuccess`) pre-record their resulting URL into
+   * `lastSelfWrittenSearchRef`, so this effect skips them and does not
+   * clobber the user's typing on every round-trip.
+   */
+  useEffect(() => {
+    const currentSearch = searchParams.toString();
+    if (lastSelfWrittenSearchRef.current === currentSearch) {
+      return;
+    }
+    lastSelfWrittenSearchRef.current = currentSearch;
+    lastAppliedSearchRef.current = appliedSearch;
+    setSearchInput(appliedSearch);
+  }, [searchParams, appliedSearch]);
+
+  // Debounced commit of the editable draft into `?name`. Resetting
+  // `?offset` in the same URL transition (rather than a separate effect)
+  // avoids the extra `listAuthors` call with the stale offset.
   useEffect(() => {
     const t = window.setTimeout(() => {
       const next = searchInput.trim();
@@ -62,11 +144,17 @@ export function AuthorsPage() {
         return;
       }
       lastAppliedSearchRef.current = next;
-      setOffset(0);
-      setAppliedSearch(next);
+      updateSearchParams((p) => {
+        if (next) {
+          p.set("name", next);
+        } else {
+          p.delete("name");
+        }
+        p.delete("offset");
+      });
     }, SEARCH_DEBOUNCE_MS);
     return () => window.clearTimeout(t);
-  }, [searchInput]);
+  }, [searchInput, updateSearchParams]);
 
   const listContextRef = useRef({
     offset,
@@ -162,8 +250,14 @@ export function AuthorsPage() {
         ctx.nameSearch === vars.nameSearch;
       if (vars.onlyRowOnPage && vars.pageOffset > 0 && stillOnSameView) {
         const next = Math.max(0, vars.pageOffset - AUTHORS_PAGE_SIZE);
+        // `flushSync` ensures the URL transition (and the dependent list
+        // query key) is committed before `invalidateQueries` triggers the
+        // refetch — otherwise the refetch goes out with the stale offset.
         flushSync(() => {
-          setOffset(next);
+          updateSearchParams((p) => {
+            if (next > 0) p.set("offset", String(next));
+            else p.delete("offset");
+          });
         });
       }
       await queryClient.invalidateQueries({ queryKey: ["authors"] });
@@ -188,11 +282,16 @@ export function AuthorsPage() {
   };
 
   const clearFilters = () => {
-    setCategoryFilterId("");
+    // Clearing the editable draft and the latched "last committed" marker
+    // alongside the URL transition prevents the debounce effect from
+    // firing a redundant follow-up commit with the now-empty value.
     setSearchInput("");
-    setAppliedSearch("");
     lastAppliedSearchRef.current = "";
-    setOffset(0);
+    updateSearchParams((p) => {
+      p.delete("category_id");
+      p.delete("name");
+      p.delete("offset");
+    });
   };
 
   const hasActiveFilter = categoryFilterId !== "" || appliedSearch !== "";
@@ -290,9 +389,12 @@ export function AuthorsPage() {
     ? page.offset + page.items.length < page.total
     : false;
 
-  const onFilterChange = (next: string) => {
-    setCategoryFilterId(next);
-    setOffset(0);
+  const onCategoryFilterChange = (next: string) => {
+    updateSearchParams((p) => {
+      if (next) p.set("category_id", next);
+      else p.delete("category_id");
+      p.delete("offset");
+    });
   };
 
   const onSubmitCreate = (e: FormEvent<HTMLFormElement>) => {
@@ -470,7 +572,8 @@ export function AuthorsPage() {
               <select
                 className="input input-compact"
                 value={categoryFilterId}
-                onChange={(ev) => onFilterChange(ev.target.value)}
+                onChange={(ev) => onCategoryFilterChange(ev.target.value)}
+                aria-label="Filter by category"
               >
                 <option value="">All</option>
                 {authorCategoryOptions.map((c) => (
@@ -738,9 +841,13 @@ export function AuthorsPage() {
                   type="button"
                   className="btn"
                   disabled={!canPrev}
-                  onClick={() =>
-                    setOffset((o) => Math.max(0, o - AUTHORS_PAGE_SIZE))
-                  }
+                  onClick={() => {
+                    const next = Math.max(0, offset - AUTHORS_PAGE_SIZE);
+                    updateSearchParams((p) => {
+                      if (next > 0) p.set("offset", String(next));
+                      else p.delete("offset");
+                    });
+                  }}
                 >
                   Previous
                 </button>
@@ -748,7 +855,12 @@ export function AuthorsPage() {
                   type="button"
                   className="btn"
                   disabled={!canNext}
-                  onClick={() => setOffset((o) => o + AUTHORS_PAGE_SIZE)}
+                  onClick={() => {
+                    const next = offset + AUTHORS_PAGE_SIZE;
+                    updateSearchParams((p) =>
+                      p.set("offset", String(next))
+                    );
+                  }}
                 >
                   Next
                 </button>
