@@ -352,7 +352,7 @@ describe("QuoteDetailPage", () => {
     renderAt("/quotes/q-missing");
 
     expect(
-      await screen.findByRole("heading", { name: /Quote not found/i })
+      await screen.findByRole("heading", { name: /Page not found/i })
     ).toBeInTheDocument();
     // Author/category lookups must not fire when there is no quote.
     expect(getAuthorMock).not.toHaveBeenCalled();
@@ -442,10 +442,8 @@ describe("QuoteDetailPage", () => {
     renderAt("/quotes/q-1");
     await screen.findByText("On Virtue");
 
-    // Multiple links may say "All quotes" (breadcrumb + not-found page); on a
-    // successful render only the breadcrumb is mounted.
-    const breadcrumb = screen.getAllByRole("link", { name: /All quotes/i });
-    expect(breadcrumb[0]).toHaveAttribute("href", "/quotes");
+    const breadcrumb = screen.getByRole("link", { name: /All quotes/i });
+    expect(breadcrumb).toHaveAttribute("href", "/quotes");
   });
 
   it("paints the author from the shared cache before the network responds", async () => {
