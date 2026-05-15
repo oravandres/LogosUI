@@ -12,14 +12,27 @@ const createImageMock = vi.fn();
 const updateImageMock = vi.fn();
 const deleteImageMock = vi.fn();
 const uploadImageMock = vi.fn();
+const generateImageMock = vi.fn();
 
 vi.mock("@/api/images", () => ({
   IMAGES_PAGE_SIZE: 20,
+  // Re-export the static catalog under the same names the component
+  // imports. Keeping the model list in lock-step with the production
+  // module avoids the test mock drifting silently from what the page
+  // actually renders.
+  IMAGE_GEN_MODELS: [
+    { id: "flux2-dev", label: "FLUX2-dev (default)" },
+    { id: "flux2-klein", label: "FLUX2-klein" },
+    { id: "qwen-image", label: "Qwen-Image" },
+    { id: "hunyuanimage-3-instruct", label: "HunyuanImage-3-instruct" },
+  ],
+  DEFAULT_IMAGE_GEN_MODEL_ID: "flux2-dev",
   listImages: (...args: unknown[]) => listImagesMock(...args),
   createImage: (...args: unknown[]) => createImageMock(...args),
   updateImage: (...args: unknown[]) => updateImageMock(...args),
   deleteImage: (...args: unknown[]) => deleteImageMock(...args),
   uploadImage: (...args: unknown[]) => uploadImageMock(...args),
+  generateImage: (...args: unknown[]) => generateImageMock(...args),
 }));
 
 vi.mock("@/api/categories", () => ({
@@ -292,5 +305,180 @@ describe("ImagesPage register-image tabs", () => {
         screen.getAllByText(/upload exceeds 10485760 bytes/i)
       ).toHaveLength(2)
     );
+  });
+});
+
+// ----------------------------------------------------------------------
+// Generate tab — synchronous POST /api/v1/images:generate
+// ----------------------------------------------------------------------
+
+describe("ImagesPage register-image > Generate tab", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    listImagesMock.mockResolvedValue(sampleList());
+    listAllCategoriesByTypeMock.mockResolvedValue([
+      { id: "cat-1", name: "Portrait", type: "image", created_at: "" },
+    ]);
+    createImageMock.mockResolvedValue({});
+    deleteImageMock.mockResolvedValue(undefined);
+    updateImageMock.mockResolvedValue({});
+    uploadImageMock.mockResolvedValue({});
+    generateImageMock.mockResolvedValue({
+      id: "img-gen-1",
+      url: "/api/v1/images/img-gen-1/blob",
+      alt_text: null,
+      category_id: null,
+      source: "generated",
+      prompt: "A serene mountain lake at dawn",
+      model: "flux2-dev",
+      width: 1024,
+      height: 1024,
+      created_at: "2020-01-03T00:00:00.000Z",
+      updated_at: "2020-01-03T00:00:00.000Z",
+    });
+  });
+
+  async function openGenerateTab(user: ReturnType<typeof userEvent.setup>) {
+    renderPage();
+    await screen.findByRole("link", { name: /example\.test/ });
+    await user.click(screen.getByRole("tab", { name: /generate/i }));
+  }
+
+  it("exposes the third tab and renders the prompt + model picker", async () => {
+    const user = userEvent.setup();
+    await openGenerateTab(user);
+
+    expect(
+      screen.getByRole("tab", { name: /generate/i })
+    ).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByLabelText(/^prompt$/i)).toBeInTheDocument();
+    const modelSelect = screen.getByLabelText(/^model$/i) as HTMLSelectElement;
+    expect(modelSelect.value).toBe("flux2-dev");
+    // The advanced size/seed group is collapsed by default but its
+    // inputs are still in the DOM (a `<details>` only hides them
+    // visually).
+    expect(screen.getByLabelText(/^seed/i)).toBeInTheDocument();
+  });
+
+  it("rejects an empty prompt before calling the network", async () => {
+    const user = userEvent.setup();
+    await openGenerateTab(user);
+
+    // Generate button is disabled when the prompt is empty (defense in
+    // depth) — but we also assert the form-level guard if the user
+    // forces a submit (some browsers will allow `Enter` from a
+    // textarea).
+    const generateBtn = screen.getByRole("button", { name: /^generate$/i });
+    expect(generateBtn).toBeDisabled();
+
+    // Type one character and clear so the textarea is "touched" but
+    // empty.
+    const prompt = screen.getByLabelText(/^prompt$/i);
+    await user.type(prompt, " ");
+    expect(generateBtn).toBeDisabled();
+    expect(generateImageMock).not.toHaveBeenCalled();
+  });
+
+  it("submits prompt, model, and dimensions to the generator", async () => {
+    const user = userEvent.setup();
+    await openGenerateTab(user);
+
+    await user.type(
+      screen.getByLabelText(/^prompt$/i),
+      "A serene mountain lake at dawn"
+    );
+
+    await user.click(screen.getByRole("button", { name: /^generate$/i }));
+
+    await waitFor(() => expect(generateImageMock).toHaveBeenCalledTimes(1));
+    expect(generateImageMock).toHaveBeenCalledWith({
+      prompt: "A serene mountain lake at dawn",
+      model: "flux2-dev",
+      width: 1024,
+      height: 1024,
+      seed: 0,
+      steps: 0,
+      cfg_scale: 0,
+      alt_text: null,
+      category_id: null,
+    });
+  });
+
+  it("maps a 504 to a 'timed out' inline message", async () => {
+    generateImageMock.mockRejectedValueOnce(
+      new ApiError("image generation timed out", 504, {
+        error: "image generation timed out",
+        details: "context deadline exceeded",
+      })
+    );
+    const user = userEvent.setup();
+    await openGenerateTab(user);
+    await user.type(screen.getByLabelText(/^prompt$/i), "windmill");
+    await user.click(screen.getByRole("button", { name: /^generate$/i }));
+
+    await screen.findByText(
+      /generation timed out — try a shorter prompt or smaller size/i
+    );
+    // The toast also surfaces the original message; that's separate
+    // from the friendly inline rephrase.
+    expect(
+      screen.getByText(/generation timed out — try a shorter prompt/i)
+    ).toBeInTheDocument();
+  });
+
+  it("maps a 502 with details to a 'failed: {details}' inline message", async () => {
+    generateImageMock.mockRejectedValueOnce(
+      new ApiError("image generation failed", 502, {
+        error: "image generation failed",
+        details: "FLUX2 worker exited code 137",
+      })
+    );
+    const user = userEvent.setup();
+    await openGenerateTab(user);
+    await user.type(screen.getByLabelText(/^prompt$/i), "OOM scene");
+    await user.click(screen.getByRole("button", { name: /^generate$/i }));
+
+    await screen.findByText(
+      /generation failed: flux2 worker exited code 137/i
+    );
+  });
+
+  it("locks the panel after a 503 with an explanatory banner", async () => {
+    generateImageMock.mockRejectedValueOnce(
+      new ApiError("image generation is not configured", 503, {
+        error: "image generation is not configured",
+      })
+    );
+    const user = userEvent.setup();
+    await openGenerateTab(user);
+    await user.type(screen.getByLabelText(/^prompt$/i), "a banner");
+    await user.click(screen.getByRole("button", { name: /^generate$/i }));
+
+    // The panel collapses to the "not configured" banner; the form is
+    // unmounted so submit can't be retried until a reload.
+    const banner = await screen.findByTestId("generate-disabled-banner");
+    expect(banner).toHaveTextContent(
+      /image generation is not configured on this server/i
+    );
+    expect(
+      screen.queryByRole("button", { name: /^generate$/i })
+    ).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/^prompt$/i)).not.toBeInTheDocument();
+  });
+
+  it("clears the form and surfaces a success toast on success", async () => {
+    const user = userEvent.setup();
+    await openGenerateTab(user);
+    const promptField = screen.getByLabelText(/^prompt$/i) as HTMLTextAreaElement;
+    await user.type(promptField, "soft mist over a lake");
+    await user.click(screen.getByRole("button", { name: /^generate$/i }));
+
+    await waitFor(() => expect(generateImageMock).toHaveBeenCalled());
+    // Prompt resets after the mutation settles so the user can start a
+    // new generation without first clearing manually.
+    await waitFor(() => expect(promptField.value).toBe(""));
+    expect(
+      await screen.findByText(/image generated/i)
+    ).toBeInTheDocument();
   });
 });
