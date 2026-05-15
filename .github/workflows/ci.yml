@@ -116,6 +116,13 @@ jobs:
           grep -qi '^X-Content-Type-Options: nosniff' /tmp/idx
           grep -qi '^X-Frame-Options: DENY' /tmp/idx
           grep -qi '^Referrer-Policy: no-referrer' /tmp/idx
+          # CSP must include the policy's anchor directive on the SPA shell
+          # itself; the §4.1 nginx repeat-headers gotcha means a regression
+          # in any one location block silently strips this header from the
+          # response (the inheritance break was the exact cause of an
+          # earlier nosniff/X-Frame-Options regression covered up by the
+          # 'always' flag elsewhere in this file).
+          grep -qi "^Content-Security-Policy: default-src 'self'" /tmp/idx
 
           echo "--- SPA fallback resolves deep links ---"
           curl -sS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:18080/quotes/abc | grep -qE '^200$'
