@@ -4,7 +4,14 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
-import { useMemo, useRef, useState, type FormEvent } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type FormEvent,
+} from "react";
 import { flushSync } from "react-dom";
 import { ApiError } from "@/api/client";
 import { listAllCategoriesByType } from "@/api/categories";
@@ -14,10 +21,12 @@ import {
   IMAGES_PAGE_SIZE,
   listImages,
   updateImage,
+  uploadImage,
 } from "@/api/images";
 import type { ImageWriteBody } from "@/api/types";
 import { EmptyState } from "@/components/EmptyState";
 import { ListSkeleton } from "@/components/Skeleton";
+import { Tabs } from "@/components/Tabs";
 import { useToast } from "@/components/useToast";
 import { safeHttpHref } from "@/url/safeHttpUrl";
 
@@ -32,6 +41,31 @@ type UpdateImageVars = {
   id: string;
   body: ImageWriteBody;
 };
+
+/**
+ * Browser-side allowlist of image MIME types we accept for upload.
+ * Mirrors `supportedUploadFormats` in
+ * `Logos/internal/handler/images.go`. Keeping the lists in sync at the
+ * boundary lets us surface a clear "this file type isn't supported"
+ * error before paying the full network round-trip.
+ */
+const ACCEPTED_UPLOAD_TYPES = [
+  "image/png",
+  "image/jpeg",
+  "image/gif",
+  "image/webp",
+];
+
+/**
+ * Default 10 MiB cap, matching the Logos server-side default
+ * (`LOGOS_IMAGE_MAX_UPLOAD_BYTES`). Hard-coding here is a pragmatic
+ * shortcut for v1 — the server still enforces its own cap, so a
+ * client-server drift just means the user sees a 413 instead of an
+ * earlier client-side validation error.
+ */
+const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+
+type RegisterTab = "url" | "upload";
 
 export function ImagesPage() {
   const queryClient = useQueryClient();
@@ -78,6 +112,27 @@ export function ImagesPage() {
     },
   });
 
+  const uploadMutation = useMutation({
+    mutationFn: ({
+      file,
+      altText,
+      categoryId,
+    }: {
+      file: File;
+      altText: string | null;
+      categoryId: string | null;
+    }) => uploadImage(file, { alt_text: altText, category_id: categoryId }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["images"] });
+      resetUploadForm();
+      toast.success("Image uploaded");
+    },
+    onError: (err) => {
+      setUploadError(err instanceof ApiError ? err.message : String(err));
+      toast.error("Could not upload image", err);
+    },
+  });
+
   const updateMutation = useMutation({
     mutationFn: ({ id, body }: UpdateImageVars) => updateImage(id, body),
     onSuccess: async () => {
@@ -113,13 +168,48 @@ export function ImagesPage() {
     },
   });
 
+  const [activeTab, setActiveTab] = useState<RegisterTab>("url");
+
+  // URL tab state.
   const [formUrl, setFormUrl] = useState("");
   const [formAlt, setFormAlt] = useState("");
   const [formCategoryId, setFormCategoryId] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
   const formUrlInputRef = useRef<HTMLInputElement | null>(null);
 
+  // Upload tab state.
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [uploadAlt, setUploadAlt] = useState("");
+  const [uploadCategoryId, setUploadCategoryId] = useState("");
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Build a preview URL for the selected file. Object URLs MUST be
+  // revoked once they're no longer in use to avoid leaking the in-memory
+  // blob handle. The `useEffect` here owns the lifecycle.
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (!uploadFile) {
+      setPreviewUrl(null);
+      return;
+    }
+    const url = URL.createObjectURL(uploadFile);
+    setPreviewUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [uploadFile]);
+
+  const resetUploadForm = () => {
+    setUploadFile(null);
+    setUploadAlt("");
+    setUploadCategoryId("");
+    setUploadError(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+  };
+
   const focusCreateForm = () => {
+    setActiveTab("url");
     formUrlInputRef.current?.focus();
   };
 
@@ -198,6 +288,47 @@ export function ImagesPage() {
     createMutation.mutate(body);
   };
 
+  const onPickFile = (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0] ?? null;
+    setUploadError(null);
+    if (!file) {
+      setUploadFile(null);
+      return;
+    }
+    if (!ACCEPTED_UPLOAD_TYPES.includes(file.type)) {
+      setUploadError(
+        `Unsupported file type. Allowed: ${ACCEPTED_UPLOAD_TYPES.join(", ")}.`
+      );
+      setUploadFile(null);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      return;
+    }
+    if (file.size > MAX_UPLOAD_BYTES) {
+      setUploadError(
+        `File is ${formatBytes(file.size)}, which exceeds the ${formatBytes(MAX_UPLOAD_BYTES)} cap.`
+      );
+      setUploadFile(null);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      return;
+    }
+    setUploadFile(file);
+  };
+
+  const onSubmitUpload = (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    setUploadError(null);
+    if (!uploadFile) {
+      setUploadError("Select an image file before uploading.");
+      return;
+    }
+    const altTrim = uploadAlt.trim();
+    uploadMutation.mutate({
+      file: uploadFile,
+      altText: altTrim === "" ? null : altTrim,
+      categoryId: uploadCategoryId === "" ? null : uploadCategoryId,
+    });
+  };
+
   const deleteError = useMemo(() => {
     const err = deleteMutation.error;
     if (!err) return null;
@@ -216,67 +347,171 @@ export function ImagesPage() {
 
       <div className="panel">
         <h3 className="panel-title">Register image</h3>
-        <form className="form-grid form-grid-images" onSubmit={onSubmitCreate}>
-          <label className="field field-span-2">
-            <span className="field-label">URL</span>
-            <input
-              ref={formUrlInputRef}
-              className="input"
-              type="text"
-              value={formUrl}
-              onChange={(ev) => setFormUrl(ev.target.value)}
-              placeholder="https://…"
-              maxLength={2048}
-              autoComplete="off"
-              disabled={createMutation.isPending}
-            />
-          </label>
-          <label className="field">
-            <span className="field-label">Alt text</span>
-            <input
-              className="input"
-              value={formAlt}
-              onChange={(ev) => setFormAlt(ev.target.value)}
-              maxLength={500}
-              autoComplete="off"
-              disabled={createMutation.isPending}
-            />
-          </label>
-          <label className="field">
-            <span className="field-label">Category (optional)</span>
-            <select
-              className="input"
-              value={formCategoryId}
-              onChange={(ev) => setFormCategoryId(ev.target.value)}
-              disabled={
-                createMutation.isPending || imageCategoriesQuery.isPending
-              }
-            >
-              <option value="">None</option>
-              {imageCategoryOptions.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <div className="form-actions">
-            <button
-              type="submit"
-              className="btn btn-primary"
-              disabled={createMutation.isPending}
-            >
-              {createMutation.isPending ? "Creating…" : "Create"}
-            </button>
-          </div>
-        </form>
+        <Tabs
+          ariaLabel="Register image source"
+          value={activeTab}
+          onChange={(id) => setActiveTab(id as RegisterTab)}
+          items={[
+            {
+              id: "url",
+              label: "By URL",
+              panel: (
+                <form
+                  className="form-grid form-grid-images"
+                  onSubmit={onSubmitCreate}
+                >
+                  <label className="field field-span-2">
+                    <span className="field-label">URL</span>
+                    <input
+                      ref={formUrlInputRef}
+                      className="input"
+                      type="text"
+                      value={formUrl}
+                      onChange={(ev) => setFormUrl(ev.target.value)}
+                      placeholder="https://…"
+                      maxLength={2048}
+                      autoComplete="off"
+                      disabled={createMutation.isPending}
+                    />
+                  </label>
+                  <label className="field">
+                    <span className="field-label">Alt text</span>
+                    <input
+                      className="input"
+                      value={formAlt}
+                      onChange={(ev) => setFormAlt(ev.target.value)}
+                      maxLength={500}
+                      autoComplete="off"
+                      disabled={createMutation.isPending}
+                    />
+                  </label>
+                  <label className="field">
+                    <span className="field-label">Category (optional)</span>
+                    <select
+                      className="input"
+                      value={formCategoryId}
+                      onChange={(ev) => setFormCategoryId(ev.target.value)}
+                      disabled={
+                        createMutation.isPending ||
+                        imageCategoriesQuery.isPending
+                      }
+                    >
+                      <option value="">None</option>
+                      {imageCategoryOptions.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <div className="form-actions">
+                    <button
+                      type="submit"
+                      className="btn btn-primary"
+                      disabled={createMutation.isPending}
+                    >
+                      {createMutation.isPending ? "Creating…" : "Create"}
+                    </button>
+                  </div>
+                </form>
+              ),
+            },
+            {
+              id: "upload",
+              label: "Upload from disk",
+              panel: (
+                <form
+                  className="form-grid form-grid-images"
+                  onSubmit={onSubmitUpload}
+                >
+                  <label className="field field-span-2">
+                    <span className="field-label">Image file</span>
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept={ACCEPTED_UPLOAD_TYPES.join(",")}
+                      onChange={onPickFile}
+                      disabled={uploadMutation.isPending}
+                    />
+                    <span className="field-hint muted">
+                      PNG, JPEG, GIF, or WebP, up to{" "}
+                      {formatBytes(MAX_UPLOAD_BYTES)}.
+                    </span>
+                  </label>
+                  {previewUrl ? (
+                    <div className="field field-span-2 upload-preview">
+                      <img
+                        src={previewUrl}
+                        alt={
+                          uploadAlt.trim() === ""
+                            ? "Selected image preview"
+                            : `Preview: ${uploadAlt.trim()}`
+                        }
+                        className="upload-preview-image"
+                      />
+                      {uploadFile ? (
+                        <span className="muted upload-preview-meta">
+                          {uploadFile.name} · {formatBytes(uploadFile.size)}
+                        </span>
+                      ) : null}
+                    </div>
+                  ) : null}
+                  <label className="field">
+                    <span className="field-label">Alt text</span>
+                    <input
+                      className="input"
+                      value={uploadAlt}
+                      onChange={(ev) => setUploadAlt(ev.target.value)}
+                      maxLength={500}
+                      autoComplete="off"
+                      disabled={uploadMutation.isPending}
+                    />
+                  </label>
+                  <label className="field">
+                    <span className="field-label">Category (optional)</span>
+                    <select
+                      className="input"
+                      value={uploadCategoryId}
+                      onChange={(ev) => setUploadCategoryId(ev.target.value)}
+                      disabled={
+                        uploadMutation.isPending ||
+                        imageCategoriesQuery.isPending
+                      }
+                    >
+                      <option value="">None</option>
+                      {imageCategoryOptions.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <div className="form-actions">
+                    <button
+                      type="submit"
+                      className="btn btn-primary"
+                      disabled={uploadMutation.isPending || !uploadFile}
+                    >
+                      {uploadMutation.isPending ? "Uploading…" : "Upload"}
+                    </button>
+                  </div>
+                </form>
+              ),
+            },
+          ]}
+        />
         {imageCategoriesQuery.isError ? (
           <p className="error" role="alert">
             Could not load image categories for the dropdown. You can still
             create images without a category.
           </p>
         ) : null}
-        {formError ? <p className="error">{formError}</p> : null}
+        {activeTab === "url" && formError ? (
+          <p className="error">{formError}</p>
+        ) : null}
+        {activeTab === "upload" && uploadError ? (
+          <p className="error">{uploadError}</p>
+        ) : null}
       </div>
 
       <div
@@ -577,4 +812,12 @@ function formatDate(iso: string): string {
 function truncateUrl(url: string, max: number): string {
   if (url.length <= max) return url;
   return `${url.slice(0, max - 1)}…`;
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  const kib = bytes / 1024;
+  if (kib < 1024) return `${kib.toFixed(1)} KiB`;
+  const mib = kib / 1024;
+  return `${mib.toFixed(1)} MiB`;
 }
