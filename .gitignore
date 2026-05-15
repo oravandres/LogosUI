@@ -22,3 +22,6 @@ dist-ssr
 
 # TypeScript
 *.tsbuildinfo
+
+# Cursor agent worktrees
+.claude/

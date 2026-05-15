@@ -1,5 +1,10 @@
-import { fetchJson, postJson, putJson } from "@/api/client";
-import type { Image, ImageWriteBody, PaginatedResponse } from "@/api/types";
+import { fetchJson, postJson, postMultipart, putJson } from "@/api/client";
+import type {
+  Image,
+  ImageUploadMetadata,
+  ImageWriteBody,
+  PaginatedResponse,
+} from "@/api/types";
 
 const API_PREFIX = "/api/v1/images";
 
@@ -55,4 +60,34 @@ export function deleteImage(id: string): Promise<void> {
   return fetchJson<void>(`${API_PREFIX}/${encodeURIComponent(id)}`, {
     method: "DELETE",
   });
+}
+
+/**
+ * Upload a binary file from disk to Logos via the multipart endpoint.
+ *
+ * Wire shape: `POST /api/v1/images/uploads`, `multipart/form-data` with
+ * a `file` part (the image bytes) plus optional `alt_text` and
+ * `category_id` form fields. On success the server returns the new
+ * persisted `Image` row (`source: "uploaded"`).
+ *
+ * The browser is responsible for setting the `Content-Type` header to
+ * `multipart/form-data; boundary=…`; we MUST NOT set it ourselves
+ * (`postMultipart` enforces this).
+ *
+ * Empty / null metadata fields are simply omitted from the FormData,
+ * matching the server's "absent ⇒ NULL" convention.
+ */
+export function uploadImage(
+  file: File,
+  metadata: ImageUploadMetadata
+): Promise<Image> {
+  const form = new FormData();
+  form.set("file", file, file.name);
+  if (metadata.alt_text != null && metadata.alt_text !== "") {
+    form.set("alt_text", metadata.alt_text);
+  }
+  if (metadata.category_id != null && metadata.category_id !== "") {
+    form.set("category_id", metadata.category_id);
+  }
+  return postMultipart<Image>(`${API_PREFIX}/uploads`, form);
 }

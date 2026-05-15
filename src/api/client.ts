@@ -206,3 +206,28 @@ export async function putJson<TResponse>(
     body: JSON.stringify(body),
   });
 }
+
+/**
+ * POST with a `FormData` body. Lets the browser build the
+ * `multipart/form-data` envelope (with the correct boundary parameter)
+ * — we deliberately do **not** set `Content-Type` here, otherwise we
+ * would clobber the boundary the browser computed.
+ *
+ * Why a sibling helper instead of overloading `postJson`? The shared
+ * rule (`.cursor/rules/12-pr-review-lessons.mdc` → "Shared `fetch`
+ * helpers") explicitly calls out that a generic helper that sets
+ * `Content-Type: application/json` for every body breaks `FormData`
+ * and `Blob`. Keeping multipart on its own helper preserves that
+ * invariant — `postJson` stays JSON-only by construction.
+ */
+export async function postMultipart<TResponse>(
+  path: string,
+  body: FormData,
+  init?: Omit<RequestInit, "body" | "method">
+): Promise<TResponse> {
+  return fetchJson<TResponse>(path, {
+    ...init,
+    method: "POST",
+    body,
+  });
+}
